@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: MIT
+
+name: Auto Tag
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  auto-tag:
+    name: Create tag if version changed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Check if VERSION changed
+        id: check
+        run: |
+          PREV=$(git show HEAD^:VERSION 2>/dev/null | tr -d '[:space:]' || echo "")
+          CURR=$(tr -d '[:space:]' < VERSION)
+          echo "prev=$PREV"
+          echo "curr=$CURR"
+          if [ -n "$PREV" ] && [ "$PREV" != "$CURR" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "version=$CURR" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and push tag
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ steps.check.outputs.version }}"
+          git push origin "v${{ steps.check.outputs.version }}"

@@ -1,0 +1,12 @@
+# Binary
+rest-helper
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

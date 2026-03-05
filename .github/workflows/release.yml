@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: MIT
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  build:
+    name: Build (Linux ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify version matches tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          CURRENT=$(tr -d '[:space:]' < VERSION)
+          if [ "$VERSION" != "$CURRENT" ]; then
+            echo "::error::Tag v$VERSION does not match VERSION file $CURRENT"
+            exit 1
+          fi
+
+      - name: Build
+        run: go build -ldflags "-X main.version=$GITHUB_REF_NAME" -o rest-helper .
+
+      - name: Rename binary
+        run: mv rest-helper rest-helper-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rest-helper-linux-${{ matrix.arch }}
+          path: rest-helper-${{ github.ref_name }}-linux-${{ matrix.arch }}
+
+  release:
+    name: Create Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "REST Helper $GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/rest-helper-${GITHUB_REF_NAME}-linux-amd64 \
+            dist/rest-helper-${GITHUB_REF_NAME}-linux-arm64
