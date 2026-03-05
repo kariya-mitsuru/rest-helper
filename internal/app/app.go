@@ -463,25 +463,27 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	}
 
 	b := hit.Bounds()
-	relX := msg.X - b.Min.X
 	relY := msg.Y - b.Min.Y
 
 	switch hit.ID() {
+	// --- URL bar ---
+	case "method-btn":
+		m.setFocus(FocusURLBar)
+		m.urlbar.ToggleSelect()
+		return *m, nil
+	case "send-btn":
+		m.setFocus(FocusURLBar)
+		return m.sendRequest()
 	case "urlbar":
 		m.setFocus(FocusURLBar)
-		if m.urlbar.IsMethodClick(msg.X) {
-			m.urlbar.ToggleSelect()
-			return *m, nil
-		}
-		if m.urlbar.IsSendClick(msg.X) {
-			return m.sendRequest()
-		}
 
+	// --- Status bar ---
+	case "help-btn":
+		m.help.Toggle()
 	case "statusbar":
-		if m.statusbar.IsHelpClick(msg.X) {
-			m.help.Toggle()
-		}
+		// no action
 
+	// --- Sidebar ---
 	case "sidebar":
 		m.setFocus(FocusSidebar)
 		cmd := m.sidebar.ClickAt(relY)
@@ -489,42 +491,51 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 			return *m, cmd
 		}
 
+	// --- Request panel ---
+	case "req-tab-body":
+		m.setFocus(FocusRequest)
+		m.request.SetTab(request.TabBody)
+	case "req-tab-headers":
+		m.setFocus(FocusRequest)
+		m.request.SetTab(request.TabHeaders)
+	case "req-tab-auth":
+		m.setFocus(FocusRequest)
+		m.request.SetTab(request.TabAuth)
+	case "req-format-toggle":
+		m.setFocus(FocusRequest)
+		m.request.ToggleBodyFormat()
+		_ = storage.SetSetting(storage.KeyBodyFormat, m.request.GetBodyFormat())
+	case "req-auth-type-btn":
+		m.setFocus(FocusRequest)
+		m.request.AuthToggleSelect()
+	case "req-visibility-hint":
+		m.setFocus(FocusRequest)
+		m.request.ToggleTokenVisibility()
 	case "request":
 		m.setFocus(FocusRequest)
-		contentX := relX - 1 // adjust for border
-		if contentX < 0 {
-			contentX = 0
-		}
-		if relY == 1 {
-			m.request.ClickTabAt(contentX)
-		} else {
-			prevFmt := m.request.GetBodyFormat()
-			m.request.ClickContent(relY, contentX)
-			if f := m.request.GetBodyFormat(); f != prevFmt {
-				_ = storage.SetSetting(storage.KeyBodyFormat, f)
-			}
-		}
 
+	// --- Response panel ---
+	case "resp-tab-body":
+		m.setFocus(FocusResponse)
+		m.response.SetTab(response.TabBody)
+	case "resp-tab-headers":
+		m.setFocus(FocusResponse)
+		m.response.SetTab(response.TabHeaders)
+	case "resp-format-toggle":
+		m.setFocus(FocusResponse)
+		m.response.ToggleFormat()
+		_ = storage.SetSetting(storage.KeyResponseFormat, m.response.GetPreferredFormat())
+	case "resp-wrap-toggle":
+		m.setFocus(FocusResponse)
+		m.response.ToggleWrap()
+		_ = storage.SetSetting(storage.KeyResponseWrap, fmt.Sprintf("%t", m.response.GetWrapMode()))
+	case "resp-scrollbar":
+		m.setFocus(FocusResponse)
+		b := hit.Bounds()
+		m.response.HandleScrollBarMouse(msg.X - b.Min.X)
+		m.response.StartDrag()
 	case "response":
 		m.setFocus(FocusResponse)
-		contentX := relX - 1 // adjust for border
-		if relY == 1 && contentX >= 0 {
-			adjX := contentX - m.response.TabAreaOffset()
-			if adjX >= 0 {
-				if m.response.IsFormatClick(adjX) {
-					m.response.ToggleFormat()
-					_ = storage.SetSetting(storage.KeyResponseFormat, m.response.GetPreferredFormat())
-				} else if m.response.IsWrapClick(adjX) {
-					m.response.ToggleWrap()
-					_ = storage.SetSetting(storage.KeyResponseWrap, fmt.Sprintf("%t", m.response.GetWrapMode()))
-				} else {
-					m.response.ClickTabAt(adjX)
-				}
-			}
-		} else if sbRow := m.response.ScrollBarRelY(); sbRow >= 0 && relY == sbRow && contentX >= 0 {
-			m.response.HandleScrollBarMouse(contentX)
-			m.response.StartDrag()
-		}
 	}
 
 	return *m, nil
@@ -662,35 +673,35 @@ func (m Model) View() tea.View {
 
 	// Base UI layers
 	layers := []*lipgloss.Layer{
-		lipgloss.NewLayer(m.urlbar.View()).ID("urlbar"),
-		lipgloss.NewLayer(m.sidebar.View()).ID("sidebar").Y(1),
-		lipgloss.NewLayer(m.request.View()).ID("request").X(m.sidebarW).Y(1),
-		lipgloss.NewLayer(m.response.View()).ID("response").X(m.sidebarW).Y(1 + m.reqH),
-		lipgloss.NewLayer(m.statusbar.View()).ID("statusbar").Y(1 + m.availH),
+		m.urlbar.ViewLayer(),
+		m.sidebar.ViewLayer().Y(1),
+		m.request.ViewLayer().X(m.sidebarW).Y(1),
+		m.response.ViewLayer().X(m.sidebarW).Y(1 + m.reqH),
+		m.statusbar.ViewLayer().Y(1 + m.availH),
 	}
 
-	// Dropdown overlays (Z=1)
+	// Dropdown overlays (Z=5, above clickable children at Z=1)
 	if m.urlbar.SelectOpen() {
 		layers = append(layers, lipgloss.NewLayer(m.urlbar.DropdownView()).
-			ID("method-dropdown").Y(1).Z(1))
+			ID("method-dropdown").Y(1).Z(5))
 	}
 	if m.request.AuthSelectOpen() {
 		layers = append(layers, lipgloss.NewLayer(m.request.AuthDropdownView()).
-			ID("auth-dropdown").X(m.sidebarW+3).Y(5).Z(1))
+			ID("auth-dropdown").X(m.sidebarW+3).Y(5).Z(5))
 	}
 
-	// Full-screen overlays (Z=10)
+	// Full-screen overlays (Z=50)
 	if m.response.FieldPickerVisible() {
 		fp := m.response.ViewFieldPicker()
 		x, y := centerOverlay(m.width, m.height, fp)
 		layers = append(layers, lipgloss.NewLayer(fp).
-			ID("fieldpicker").X(x).Y(y).Z(10))
+			ID("fieldpicker").X(x).Y(y).Z(50))
 	}
 	if m.help.Visible {
 		hv := m.help.View()
 		x, y := centerOverlay(m.width, m.height, hv)
 		layers = append(layers, lipgloss.NewLayer(hv).
-			ID("help").X(x).Y(y).Z(10))
+			ID("help").X(x).Y(y).Z(50))
 	}
 
 	comp := lipgloss.NewCompositor(layers...)

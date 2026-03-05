@@ -133,56 +133,14 @@ func (m *Model) updateTabFocus() {
 	}
 }
 
-// ClickContent handles a click within the request panel content area.
-// relRow and relCol are relative to the request panel top-left (including border).
-func (m *Model) ClickContent(relRow, relCol int) {
-	switch m.activeTab {
-	case TabBody:
-		// Format label row: border(1) + tabs(1) + textarea_height
-		// textarea height = (m.height - 3) - 1 = m.height - 4
-		formatRow := 1 + 1 + (m.height - 4)
-		if relRow != formatRow {
-			return
-		}
-		// Format label is rendered as "  " + "JSON/YAML" starting at col 2
-		label := formatNames[m.body.format]
-		labelW := lipgloss.Width(styles.ActiveTab.Render(label))
-		if relCol >= 2 && relCol < 2+labelW {
-			m.body.ToggleFormat()
-		}
-
-	case TabAuth:
-		// Button row is at relRow == 3 (border=1, tabs=1, blank=1, button at row 3)
-		if relRow == 3 {
-			m.auth.ToggleSelect()
-		}
-		// Hint row: "  Token  toggle visibility [Ctrl+E]" at relRow == 5
-		if relRow == 5 && m.auth.HasTokenField() {
-			hintStart := lipgloss.Width(lipgloss.NewStyle().Bold(true).Render("  Token")) + 2
-			hintEnd := hintStart + lipgloss.Width(styles.MutedStyle.Underline(true).Render("toggle visibility [Ctrl+E]"))
-			if relCol >= hintStart && relCol < hintEnd {
-				m.auth.ToggleTokenVisibility()
-			}
-		}
-	}
+// ToggleBodyFormat toggles the body between JSON and YAML format.
+func (m *Model) ToggleBodyFormat() {
+	m.body.ToggleFormat()
 }
 
-// ClickTabAt determines which tab was clicked based on the column position
-// (relative to the request panel's content area) and switches to it.
-func (m *Model) ClickTabAt(col int) {
-	// Skip past "Request  " title prefix
-	titleW := lipgloss.Width(lipgloss.NewStyle().Bold(true).Render("Request"))
-	pos := titleW + 2
-	for _, t := range tabsConfig {
-		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
-		w := lipgloss.Width(styles.InactiveTab.Render(label))
-		if col >= pos && col < pos+w {
-			m.activeTab = t.tab
-			m.updateTabFocus()
-			return
-		}
-		pos += w + 2 // 2 spaces between tabs
-	}
+// ToggleTokenVisibility toggles the auth token between password and plain text.
+func (m *Model) ToggleTokenVisibility() {
+	m.auth.ToggleTokenVisibility()
 }
 
 // AuthSelectOpen returns true when the auth type dropdown is visible.
@@ -235,7 +193,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) View() string {
+func (m Model) ViewLayer() *lipgloss.Layer {
 	title := lipgloss.NewStyle().Bold(true).Render("Request")
 	tabs := title + "  " + m.renderTabs()
 
@@ -255,11 +213,60 @@ func (m Model) View() string {
 	}
 
 	inner := lipgloss.JoinVertical(lipgloss.Left, tabs, content)
+	full := borderStyle.Width(m.width).Height(m.height).Render(inner)
 
-	return borderStyle.
-		Width(m.width).
-		Height(m.height).
-		Render(inner)
+	// Child layers for clickable elements
+	var children []*lipgloss.Layer
+
+	// Tab buttons (Y=1 inside border)
+	tabX := 1 + lipgloss.Width(title) + 2 // border(1) + title + gap(2)
+	for _, t := range tabsConfig {
+		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
+		var rendered string
+		if t.tab == m.activeTab {
+			rendered = styles.ActiveTab.Render(label)
+		} else {
+			rendered = styles.InactiveTab.Render(label)
+		}
+		children = append(children, lipgloss.NewLayer(rendered).
+			ID("req-tab-"+strings.ToLower(t.name)).
+			X(tabX).Y(1).Z(1))
+		tabX += lipgloss.Width(rendered) + 2
+	}
+
+	switch m.activeTab {
+	case TabBody:
+		// Format toggle at bottom row
+		formatLabel := styles.ActiveTab.Render(formatNames[m.body.format])
+		children = append(children, lipgloss.NewLayer(formatLabel).
+			ID("req-format-toggle").
+			X(3).Y(m.height-2).Z(1)) // border(1) + indent(2)
+
+	case TabAuth:
+		// Auth type button
+		label := lipgloss.NewStyle().Bold(true).Render("Auth Type")
+		typeName := authTypes[m.auth.typeIdx]
+		typeBtn := lipgloss.NewStyle().Bold(true).
+			Foreground(styles.PrimaryColor).
+			Render(typeName + " ▼")
+		btnX := 1 + 2 + lipgloss.Width(label) + 2
+		children = append(children, lipgloss.NewLayer(typeBtn).
+			ID("req-auth-type-btn").
+			X(btnX).Y(3).Z(1))
+
+		// Visibility toggle hint
+		if m.auth.HasTokenField() {
+			hint := styles.MutedStyle.Underline(true).
+				Render("toggle visibility [Ctrl+E]")
+			tokenLabel := lipgloss.NewStyle().Bold(true).Render("  Token")
+			hintX := 1 + lipgloss.Width(tokenLabel) + 2
+			children = append(children, lipgloss.NewLayer(hint).
+				ID("req-visibility-hint").
+				X(hintX).Y(5).Z(1))
+		}
+	}
+
+	return lipgloss.NewLayer(full, children...).ID("request")
 }
 
 func (m Model) renderTabs() string {

@@ -289,42 +289,6 @@ func (m Model) renderTabs() string {
 	return result
 }
 
-// tabPrefixWidth returns the visual width of tab labels (before format/wrap toggles).
-func (m Model) tabPrefixWidth() int {
-	w := 0
-	for i, t := range respTabsConfig {
-		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
-		w += lipgloss.Width(styles.InactiveTab.Render(label))
-		if i < len(respTabsConfig)-1 {
-			w += 2 // gap
-		}
-	}
-	return w
-}
-
-// ClickTabAt handles a mouse click on the tab row at the given column position.
-func (m *Model) ClickTabAt(col int) {
-	pos := 0
-	for _, t := range respTabsConfig {
-		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
-		w := lipgloss.Width(styles.InactiveTab.Render(label))
-		if col >= pos && col < pos+w {
-			if m.activeTab != t.tab {
-				m.activeTab = t.tab
-				m.xOffset = 0
-				m.refreshContent()
-			}
-			return
-		}
-		pos += w + 2
-	}
-}
-
-// TabAreaOffset returns the column offset where tabs begin within the content area.
-// Tabs are always on line 0 after "Response  ".
-func (m Model) TabAreaOffset() int {
-	return lipgloss.Width(m.renderTitle()) + 2
-}
 
 // SetTab sets the active response tab.
 func (m *Model) SetTab(tab responseTab) {
@@ -346,28 +310,6 @@ func (m *Model) CycleTab() {
 	m.refreshContent()
 }
 
-// IsFormatClick checks if the given column (relative to tab area start)
-// is on the format toggle label.
-func (m Model) IsFormatClick(col int) bool {
-	if m.activeTab != TabBody || !m.isBodyJSON() || m.response == nil {
-		return false
-	}
-	start := m.tabPrefixWidth() + 2
-	formatW := lipgloss.Width(styles.ActiveTab.Render("JSON"))
-	return col >= start && col < start+formatW
-}
-
-// IsWrapClick checks if the given column (relative to tab area start)
-// is on the wrap/scroll toggle label.
-func (m Model) IsWrapClick(col int) bool {
-	if m.response == nil {
-		return false
-	}
-	formatW := lipgloss.Width(styles.ActiveTab.Render("JSON"))
-	start := m.tabPrefixWidth() + 2 + formatW + 2
-	wrapW := lipgloss.Width(styles.ActiveTab.Render("Scroll"))
-	return col >= start && col < start+wrapW
-}
 
 // FieldPickerVisible returns whether the field picker overlay is open.
 func (m Model) FieldPickerVisible() bool {
@@ -508,7 +450,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) View() string {
+func (m Model) ViewLayer() *lipgloss.Layer {
 	tabs := m.renderTabs()
 
 	borderStyle := styles.NormalBorder
@@ -516,7 +458,6 @@ func (m Model) View() string {
 		borderStyle = styles.FocusedBorder
 	}
 
-	// Line 0: title + tabs, Line 1: status/meta (if present)
 	line0 := m.renderTitle() + "  " + tabs
 
 	parts := []string{line0}
@@ -525,17 +466,73 @@ func (m Model) View() string {
 	}
 	parts = append(parts, m.viewport.View())
 
-	// Show horizontal scrollbar in scroll mode when content is wider than viewport
 	if !m.wrapMode && m.maxLineWidth > m.contentWidth() {
 		parts = append(parts, m.renderHScrollBar())
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	full := borderStyle.Width(m.width).Height(m.height).Render(content)
 
-	return borderStyle.
-		Width(m.width).
-		Height(m.height).
-		Render(content)
+	// Child layers for clickable elements
+	var children []*lipgloss.Layer
+
+	// Tab buttons (Y=1 inside border)
+	titleW := lipgloss.Width(m.renderTitle())
+	x := 1 + titleW + 2 // border(1) + title + gap(2)
+
+	for _, t := range respTabsConfig {
+		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
+		var rendered string
+		if t.tab == m.activeTab {
+			rendered = styles.ActiveTab.Render(label)
+		} else {
+			rendered = styles.InactiveTab.Render(label)
+		}
+		children = append(children, lipgloss.NewLayer(rendered).
+			ID("resp-tab-"+strings.ToLower(t.name)).
+			X(x).Y(1).Z(1))
+		x += lipgloss.Width(rendered) + 2
+	}
+
+	if m.response != nil {
+		// Format toggle (or placeholder gap)
+		if m.activeTab == TabBody && m.isBodyJSON() {
+			label := "JSON"
+			if m.display == formatYAML {
+				label = "YAML"
+			}
+			rendered := styles.ActiveTab.Render(label)
+			children = append(children, lipgloss.NewLayer(rendered).
+				ID("resp-format-toggle").
+				X(x).Y(1).Z(1))
+			x += lipgloss.Width(rendered) + 2
+		} else {
+			x += 4 + 2 // placeholder + gap
+		}
+
+		// Wrap/Scroll toggle
+		var wrapLabel string
+		if m.wrapMode {
+			wrapLabel = " Wrap "
+		} else {
+			wrapLabel = "Scroll"
+		}
+		wrapRendered := styles.ActiveTab.Render(wrapLabel)
+		children = append(children, lipgloss.NewLayer(wrapRendered).
+			ID("resp-wrap-toggle").
+			X(x).Y(1).Z(1))
+
+		// Scrollbar
+		if !m.wrapMode && m.maxLineWidth > m.contentWidth() {
+			sb := m.renderHScrollBar()
+			sbY := m.ScrollBarRelY()
+			children = append(children, lipgloss.NewLayer(sb).
+				ID("resp-scrollbar").
+				X(1).Y(sbY).Z(1))
+		}
+	}
+
+	return lipgloss.NewLayer(full, children...).ID("response")
 }
 
 // renderHScrollBar renders a horizontal scrollbar indicating xOffset position.

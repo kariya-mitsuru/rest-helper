@@ -39,7 +39,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
+func (m Model) ViewLayer() *lipgloss.Layer {
 	style := lipgloss.NewStyle().
 		Background(lipgloss.Color("#1F2937")).
 		Foreground(styles.MutedColor).
@@ -47,7 +47,8 @@ func (m Model) View() string {
 		Padding(0, 1)
 
 	left := m.text
-	right := fmt.Sprintf("History: %d items | ?/F1: help", m.historyCount)
+	helpLabel := "?/F1: help"
+	right := fmt.Sprintf("History: %d items | %s", m.historyCount, helpLabel)
 
 	spaces := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 4
 	if spaces < 1 {
@@ -55,17 +56,17 @@ func (m Model) View() string {
 	}
 
 	content := left + fmt.Sprintf("%*s", spaces, "") + right
-	return style.Render(content)
-}
+	full := style.Render(content)
 
-// IsHelpClick returns true if the given absolute column falls on the "?/F1: help" label.
-func (m Model) IsHelpClick(col int) bool {
-	helpLabel := "?/F1: help"
-	helpW := lipgloss.Width(helpLabel)
-	// View() content starts at col 1 (left padding) and is m.width-4 chars long,
-	// so the content string ends at column m.width-4.
-	// The help label is the last helpW chars of the content.
-	helpEnd := m.width - 4
-	helpStart := helpEnd - helpW + 1
-	return col >= helpStart && col <= helpEnd
+	// Help label position: padding(1) + left + spaces + "History: N items | "
+	helpPrefix := fmt.Sprintf("History: %d items | ", m.historyCount)
+	helpX := 1 + lipgloss.Width(left) + spaces + lipgloss.Width(helpPrefix)
+	helpRendered := lipgloss.NewStyle().
+		Background(lipgloss.Color("#1F2937")).
+		Foreground(styles.MutedColor).
+		Render(helpLabel)
+
+	return lipgloss.NewLayer(full,
+		lipgloss.NewLayer(helpRendered).ID("help-btn").X(helpX).Z(1),
+	).ID("statusbar")
 }

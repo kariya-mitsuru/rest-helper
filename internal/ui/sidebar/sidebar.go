@@ -285,7 +285,11 @@ func (m *Model) ensureVisible() {
 	}
 }
 
-func (m Model) View() string {
+func (m Model) ViewLayer() *lipgloss.Layer {
+	return lipgloss.NewLayer(m.view()).ID("sidebar")
+}
+
+func (m Model) view() string {
 	borderStyle := styles.NormalBorder
 	if m.focused {
 		borderStyle = styles.FocusedBorder

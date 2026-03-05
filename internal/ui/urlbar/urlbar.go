@@ -170,22 +170,29 @@ func (m Model) inputWidth() int {
 	return w
 }
 
-func (m Model) View() string {
+func (m Model) ViewLayer() *lipgloss.Layer {
+	methodBtn := m.methodBtnView()
+	methodW := lipgloss.Width(methodBtn)
+
 	hint := styles.MutedStyle.Render(" [Alt+U]")
+	hintW := lipgloss.Width(hint)
 
 	m.urlInput.SetWidth(m.inputWidth())
 	urlStr := m.urlInput.View()
+	urlW := lipgloss.Width(urlStr)
 
-	return lipgloss.JoinHorizontal(
+	sendBtn := m.sendBtnView()
+	sendX := methodW + 1 + urlW + 1 + hintW + 1
+
+	full := lipgloss.JoinHorizontal(
 		lipgloss.Center,
-		m.methodBtnView(),
-		" ",
-		urlStr,
-		" ",
-		hint,
-		" ",
-		m.sendBtnView(),
+		methodBtn, " ", urlStr, " ", hint, " ", sendBtn,
 	)
+
+	return lipgloss.NewLayer(full,
+		lipgloss.NewLayer(methodBtn).ID("method-btn").Z(1),
+		lipgloss.NewLayer(sendBtn).ID("send-btn").X(sendX).Z(1),
+	).ID("urlbar")
 }
 
 // DropdownView returns the rendered dropdown to be overlaid by the parent.
@@ -206,22 +213,6 @@ func (m Model) DropdownView() string {
 		BorderForeground(styles.PrimaryColor).
 		Padding(0, 1).
 		Render(b.String())
-}
-
-// IsMethodClick returns true if the given column falls within the method button area.
-func (m Model) IsMethodClick(col int) bool {
-	return col < lipgloss.Width(m.methodBtnView())
-}
-
-// IsSendClick returns true if the given column falls within the Send button area.
-func (m Model) IsSendClick(col int) bool {
-	methodW := lipgloss.Width(m.methodBtnView())
-	sendW := lipgloss.Width(m.sendBtnView())
-	hintW := lipgloss.Width(styles.MutedStyle.Render(" [Alt+U]"))
-	// Send button starts after: methodBtn + " " + urlInput + " " + hint + " "
-	sendStart := methodW + 1 + m.inputWidth() + 1 + hintW + 1
-	sendEnd := sendStart + sendW
-	return col >= sendStart && col < sendEnd
 }
 
 // ClickDropdown handles a mouse click on the dropdown overlay.
