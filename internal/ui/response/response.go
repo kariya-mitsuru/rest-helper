@@ -255,41 +255,6 @@ func (m *Model) formatHeaders() string {
 	return b.String()
 }
 
-// renderTabs returns the tab bar row with Body/Headers tabs and optional format/wrap toggles.
-func (m Model) renderTabs() string {
-	var parts []string
-	for _, t := range respTabsConfig {
-		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
-		if t.tab == m.activeTab {
-			parts = append(parts, styles.ActiveTab.Render(label))
-		} else {
-			parts = append(parts, styles.InactiveTab.Render(label))
-		}
-	}
-
-	result := strings.Join(parts, "  ")
-
-	if m.response != nil {
-		if m.activeTab == TabBody && m.isBodyJSON() {
-			label := "JSON"
-			if m.display == formatYAML {
-				label = "YAML"
-			}
-			result += "  " + styles.ActiveTab.Render(label)
-		} else {
-			result += "  " + "    " // placeholder matching "JSON"/"YAML" width
-		}
-		if m.wrapMode {
-			result += "  " + styles.ActiveTab.Render(" Wrap ")
-		} else {
-			result += "  " + styles.ActiveTab.Render("Scroll")
-		}
-	}
-
-	return result
-}
-
-
 // SetTab sets the active response tab.
 func (m *Model) SetTab(tab responseTab) {
 	if tab != m.activeTab {
@@ -309,7 +274,6 @@ func (m *Model) CycleTab() {
 	m.xOffset = 0
 	m.refreshContent()
 }
-
 
 // FieldPickerVisible returns whether the field picker overlay is open.
 func (m Model) FieldPickerVisible() bool {
@@ -451,14 +415,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) ViewLayer() *lipgloss.Layer {
-	tabs := m.renderTabs()
-
 	borderStyle := styles.NormalBorder
 	if m.focused {
 		borderStyle = styles.FocusedBorder
 	}
 
-	line0 := m.renderTitle() + "  " + tabs
+	line0 := m.renderTitle()
 
 	parts := []string{line0}
 	if meta := m.renderMeta(); meta != "" {
@@ -477,7 +439,7 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 	var children []*lipgloss.Layer
 
 	// Tab buttons (Y=1 inside border)
-	titleW := lipgloss.Width(m.renderTitle())
+	titleW := lipgloss.Width(line0)
 	x := 1 + titleW + 2 // border(1) + title + gap(2)
 
 	for _, t := range respTabsConfig {
@@ -505,17 +467,13 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 			children = append(children, lipgloss.NewLayer(rendered).
 				ID("resp-format-toggle").
 				X(x).Y(1).Z(1))
-			x += lipgloss.Width(rendered) + 2
-		} else {
-			x += 4 + 2 // placeholder + gap
 		}
+		x += 4 + 2 // placeholder + gap
 
 		// Wrap/Scroll toggle
-		var wrapLabel string
+		wrapLabel := "Scroll"
 		if m.wrapMode {
 			wrapLabel = " Wrap "
-		} else {
-			wrapLabel = "Scroll"
 		}
 		wrapRendered := styles.ActiveTab.Render(wrapLabel)
 		children = append(children, lipgloss.NewLayer(wrapRendered).
