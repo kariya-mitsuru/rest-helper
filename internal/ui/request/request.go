@@ -195,7 +195,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 func (m Model) ViewLayer() *lipgloss.Layer {
 	title := lipgloss.NewStyle().Bold(true).Render("Request")
-	tabs := title + "  " + m.renderTabs()
 
 	borderStyle := styles.NormalBorder
 	if m.focused {
@@ -212,13 +211,14 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 		content = m.auth.View()
 	}
 
-	inner := lipgloss.JoinVertical(lipgloss.Left, tabs, content)
+	// Parent content: title + content (tabs rendered as child layers only)
+	inner := lipgloss.JoinVertical(lipgloss.Left, title, content)
 	full := borderStyle.Width(m.width).Height(m.height).Render(inner)
 
 	// Child layers for clickable elements
 	var children []*lipgloss.Layer
 
-	// Tab buttons (Y=1 inside border)
+	// Tab buttons (Y=1 inside border, after title)
 	tabX := 1 + lipgloss.Width(title) + 2 // border(1) + title + gap(2)
 	for _, t := range tabsConfig {
 		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
@@ -269,16 +269,3 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 	return lipgloss.NewLayer(full, children...).ID("request")
 }
 
-func (m Model) renderTabs() string {
-	var parts []string
-	for _, t := range tabsConfig {
-		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
-		if t.tab == m.activeTab {
-			parts = append(parts, styles.ActiveTab.Render(label))
-		} else {
-			parts = append(parts, styles.InactiveTab.Render(label))
-		}
-	}
-
-	return strings.Join(parts, "  ")
-}

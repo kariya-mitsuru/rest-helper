@@ -474,7 +474,7 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	case "send-btn":
 		m.setFocus(FocusURLBar)
 		return m.sendRequest()
-	case "urlbar":
+	case "url-input", "url-hint", "urlbar":
 		m.setFocus(FocusURLBar)
 
 	// --- Status bar ---

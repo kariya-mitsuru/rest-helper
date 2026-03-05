@@ -182,15 +182,16 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 	urlW := lipgloss.Width(urlStr)
 
 	sendBtn := m.sendBtnView()
-	sendX := methodW + 1 + urlW + 1 + hintW + 1
 
-	full := lipgloss.JoinHorizontal(
-		lipgloss.Center,
-		methodBtn, " ", urlStr, " ", hint, " ", sendBtn,
-	)
+	// Parent: only URL input and hint (non-clickable parts)
+	urlX := methodW + 1
+	hintX := urlX + urlW + 1
+	sendX := hintX + hintW + 1
 
-	return lipgloss.NewLayer(full,
+	return lipgloss.NewLayer("",
 		lipgloss.NewLayer(methodBtn).ID("method-btn").Z(1),
+		lipgloss.NewLayer(urlStr).ID("url-input").X(urlX),
+		lipgloss.NewLayer(hint).ID("url-hint").X(hintX),
 		lipgloss.NewLayer(sendBtn).ID("send-btn").X(sendX).Z(1),
 	).ID("urlbar")
 }
