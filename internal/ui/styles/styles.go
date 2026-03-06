@@ -4,6 +4,7 @@ package styles
 
 import (
 	"image/color"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 )
@@ -76,6 +77,34 @@ var (
 	MutedStyle = lipgloss.NewStyle().Foreground(MutedColor)
 	BoldStyle  = lipgloss.NewStyle().Bold(true)
 )
+
+// TabDef describes a tab for RenderTabLayers.
+type TabDef struct {
+	Name   string
+	Key    string
+	Active bool
+}
+
+// RenderTabLayers creates child layers for a row of tabs.
+// Returns the layers and the next X position after the last tab.
+func RenderTabLayers(tabs []TabDef, idPrefix string, startX, y int) ([]*lipgloss.Layer, int) {
+	x := startX
+	var layers []*lipgloss.Layer
+	for _, t := range tabs {
+		label := t.Name + " [Alt+" + t.Key + "]"
+		var rendered string
+		if t.Active {
+			rendered = ActiveTab.Render(label)
+		} else {
+			rendered = InactiveTab.Render(label)
+		}
+		id := idPrefix + strings.ToLower(t.Name)
+		layers = append(layers, lipgloss.NewLayer(rendered).
+			ID(id).X(x).Y(y).Z(1))
+		x += lipgloss.Width(rendered) + 2
+	}
+	return layers, x
+}
 
 func MethodStyle(method string) lipgloss.Style {
 	color, ok := MethodColors[method]

@@ -442,19 +442,13 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 	titleW := lipgloss.Width(line0)
 	x := 1 + titleW + 2 // border(1) + title + gap(2)
 
+	var tabDefs []styles.TabDef
 	for _, t := range respTabsConfig {
-		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
-		var rendered string
-		if t.tab == m.activeTab {
-			rendered = styles.ActiveTab.Render(label)
-		} else {
-			rendered = styles.InactiveTab.Render(label)
-		}
-		children = append(children, lipgloss.NewLayer(rendered).
-			ID("resp-tab-"+strings.ToLower(t.name)).
-			X(x).Y(1).Z(1))
-		x += lipgloss.Width(rendered) + 2
+		tabDefs = append(tabDefs, styles.TabDef{Name: t.name, Key: t.key, Active: t.tab == m.activeTab})
 	}
+	tabLayers, nextX := styles.RenderTabLayers(tabDefs, "resp-tab-", x, 1)
+	children = append(children, tabLayers...)
+	x = nextX
 
 	if m.response != nil {
 		// Format toggle (or placeholder gap)

@@ -131,6 +131,10 @@ func (m *HeadersModel) Focus() {
 
 func (m *HeadersModel) Blur() {
 	m.focused = false
+	m.blurAllInputs()
+}
+
+func (m *HeadersModel) blurAllInputs() {
 	for i := range m.pairs {
 		m.pairs[i].key.Blur()
 		m.pairs[i].value.Blur()
@@ -138,10 +142,7 @@ func (m *HeadersModel) Blur() {
 }
 
 func (m *HeadersModel) updateInputFocus() {
-	for i := range m.pairs {
-		m.pairs[i].key.Blur()
-		m.pairs[i].value.Blur()
-	}
+	m.blurAllInputs()
 	if m.cursor < len(m.pairs) {
 		if m.colFocus == 0 {
 			m.pairs[m.cursor].key.Focus()

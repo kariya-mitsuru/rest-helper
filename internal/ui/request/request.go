@@ -3,9 +3,6 @@
 package request
 
 import (
-	"fmt"
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -220,19 +217,12 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 
 	// Tab buttons (Y=1 inside border, after title)
 	tabX := 1 + lipgloss.Width(title) + 2 // border(1) + title + gap(2)
+	var tabDefs []styles.TabDef
 	for _, t := range tabsConfig {
-		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
-		var rendered string
-		if t.tab == m.activeTab {
-			rendered = styles.ActiveTab.Render(label)
-		} else {
-			rendered = styles.InactiveTab.Render(label)
-		}
-		children = append(children, lipgloss.NewLayer(rendered).
-			ID("req-tab-"+strings.ToLower(t.name)).
-			X(tabX).Y(1).Z(1))
-		tabX += lipgloss.Width(rendered) + 2
+		tabDefs = append(tabDefs, styles.TabDef{Name: t.name, Key: t.key, Active: t.tab == m.activeTab})
 	}
+	tabLayers, _ := styles.RenderTabLayers(tabDefs, "req-tab-", tabX, 1)
+	children = append(children, tabLayers...)
 
 	switch m.activeTab {
 	case TabBody:

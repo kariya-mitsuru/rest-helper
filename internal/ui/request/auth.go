@@ -127,30 +127,22 @@ func (m *AuthModel) ClickDropdown(row, col int) bool {
 	}
 	m.typeIdx = idx
 	m.selectOpen = false
-	if m.typeIdx > 0 {
-		m.tokenInput.Focus()
-	} else {
-		m.tokenInput.Blur()
-	}
+	m.updateTokenInputFocus()
 	return true
-}
-
-// ClickType selects the auth type at the given row (0-based from the first item).
-func (m *AuthModel) ClickType(idx int) {
-	if idx < 0 || idx >= len(authTypes) {
-		return
-	}
-	m.typeIdx = idx
-	if m.typeIdx > 0 {
-		m.tokenInput.Focus()
-	} else {
-		m.tokenInput.Blur()
-	}
 }
 
 // HasTokenField returns true when a token type (non-None) is selected.
 func (m AuthModel) HasTokenField() bool {
 	return m.typeIdx > 0
+}
+
+// updateTokenInputFocus focuses or blurs the token input based on typeIdx.
+func (m *AuthModel) updateTokenInputFocus() {
+	if m.typeIdx > 0 {
+		m.tokenInput.Focus()
+	} else {
+		m.tokenInput.Blur()
+	}
 }
 
 // ToggleTokenVisibility switches the token between password and plain text.
@@ -196,11 +188,7 @@ func (m AuthModel) Update(msg tea.Msg) (AuthModel, tea.Cmd) {
 			case "enter":
 				m.typeIdx = m.selectIdx
 				m.selectOpen = false
-				if m.typeIdx > 0 {
-					m.tokenInput.Focus()
-				} else {
-					m.tokenInput.Blur()
-				}
+				m.updateTokenInputFocus()
 			case "esc":
 				m.selectOpen = false
 			}
@@ -212,26 +200,17 @@ func (m AuthModel) Update(msg tea.Msg) (AuthModel, tea.Cmd) {
 		case "up":
 			if m.typeIdx > 0 {
 				m.typeIdx--
-				if m.typeIdx == 0 {
-					m.tokenInput.Blur()
-				}
+				m.updateTokenInputFocus()
 			}
 			return m, nil
 		case "down":
 			if m.typeIdx < len(authTypes)-1 {
 				m.typeIdx++
-				if m.typeIdx > 0 {
-					m.tokenInput.Focus()
-				}
+				m.updateTokenInputFocus()
 			}
 			return m, nil
 		case "ctrl+e":
-			// Toggle password visibility
-			if m.tokenInput.EchoMode == textinput.EchoPassword {
-				m.tokenInput.EchoMode = textinput.EchoNormal
-			} else {
-				m.tokenInput.EchoMode = textinput.EchoPassword
-			}
+			m.ToggleTokenVisibility()
 			return m, nil
 		}
 	}
