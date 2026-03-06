@@ -368,6 +368,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case "ctrl+w":
 			m.ToggleWrap()
 			return m, nil
+		case "home":
+			m.viewport.GotoTop()
+			return m, nil
+		case "end":
+			m.viewport.GotoBottom()
+			return m, nil
 		case "left":
 			if !m.wrapMode && m.xOffset > 0 {
 				m.xOffset--
