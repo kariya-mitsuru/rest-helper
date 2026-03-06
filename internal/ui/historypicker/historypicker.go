@@ -404,11 +404,17 @@ func (m Model) View() string {
 		end = len(m.filtered)
 	}
 
+	sb := styles.VScrollbar(len(m.filtered), vis, m.scroll)
+	listW := innerW
+	if sb != nil {
+		listW-- // reserve 1 column for scrollbar
+	}
+
 	var lines []string
 	for i := m.scroll; i < end; i++ {
 		idx := m.filtered[i]
 		entry := m.entries[idx]
-		line := m.renderEntry(entry, i == m.cursor, innerW)
+		line := m.renderEntry(entry, i == m.cursor, listW)
 		lines = append(lines, line)
 	}
 
@@ -420,10 +426,13 @@ func (m Model) View() string {
 		lines = append(lines, "")
 	}
 
-	// Append vertical scrollbar
-	sb := styles.VScrollbar(len(m.filtered), vis, m.scroll)
 	if sb != nil {
 		for i := range lines {
+			// Pad line to listW then append scrollbar
+			pad := listW - lipgloss.Width(lines[i])
+			if pad > 0 {
+				lines[i] += strings.Repeat(" ", pad)
+			}
 			lines[i] += sb[i]
 		}
 	}

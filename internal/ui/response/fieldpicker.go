@@ -273,6 +273,12 @@ func (m FieldPickerModel) View() string {
 		end = len(m.filtered)
 	}
 
+	sb := styles.VScrollbar(len(m.filtered), vis, m.scroll)
+	listW := innerW
+	if sb != nil {
+		listW-- // reserve 1 column for scrollbar
+	}
+
 	selectedStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#1F2937")).
 		Background(styles.PrimaryColor).
@@ -286,12 +292,12 @@ func (m FieldPickerModel) View() string {
 		item := m.items[idx]
 
 		plain := item.path + " = " + item.display
-		if ansi.StringWidth(plain) > innerW {
-			plain = ansi.Truncate(plain, innerW-1, "…")
+		if ansi.StringWidth(plain) > listW {
+			plain = ansi.Truncate(plain, listW-1, "…")
 		}
 
 		if i == m.cursor {
-			line := selectedStyle.Render(fmt.Sprintf("%-*s", innerW, plain))
+			line := selectedStyle.Render(fmt.Sprintf("%-*s", listW, plain))
 			lines = append(lines, line)
 		} else {
 			// Split back into path and value parts for coloring
@@ -312,10 +318,12 @@ func (m FieldPickerModel) View() string {
 		lines = append(lines, "")
 	}
 
-	// Append vertical scrollbar
-	sb := styles.VScrollbar(len(m.filtered), vis, m.scroll)
 	if sb != nil {
 		for i := range lines {
+			pad := listW - lipgloss.Width(lines[i])
+			if pad > 0 {
+				lines[i] += strings.Repeat(" ", pad)
+			}
 			lines[i] += sb[i]
 		}
 	}
