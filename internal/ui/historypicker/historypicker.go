@@ -405,16 +405,12 @@ func (m Model) View() string {
 	}
 
 	sb := styles.VScrollbar(len(m.filtered), vis, m.scroll)
-	listW := innerW
-	if sb != nil {
-		listW-- // reserve 1 column for scrollbar
-	}
 
 	var lines []string
 	for i := m.scroll; i < end; i++ {
 		idx := m.filtered[i]
 		entry := m.entries[idx]
-		line := m.renderEntry(entry, i == m.cursor, listW)
+		line := m.renderEntry(entry, i == m.cursor, innerW)
 		lines = append(lines, line)
 	}
 
@@ -428,8 +424,7 @@ func (m Model) View() string {
 
 	if sb != nil {
 		for i := range lines {
-			// Pad line to listW then append scrollbar
-			pad := listW - lipgloss.Width(lines[i])
+			pad := innerW - lipgloss.Width(lines[i])
 			if pad > 0 {
 				lines[i] += strings.Repeat(" ", pad)
 			}
@@ -461,8 +456,12 @@ func (m Model) View() string {
 
 	overlayStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(styles.PrimaryColor).
-		Padding(0, 1)
+		BorderForeground(styles.PrimaryColor)
+	if sb != nil {
+		overlayStyle = overlayStyle.Padding(0, 0, 0, 1) // no right padding when scrollbar present
+	} else {
+		overlayStyle = overlayStyle.Padding(0, 1)
+	}
 
 	return overlayStyle.Render(b.String())
 }

@@ -274,10 +274,6 @@ func (m FieldPickerModel) View() string {
 	}
 
 	sb := styles.VScrollbar(len(m.filtered), vis, m.scroll)
-	listW := innerW
-	if sb != nil {
-		listW-- // reserve 1 column for scrollbar
-	}
 
 	selectedStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#1F2937")).
@@ -292,12 +288,12 @@ func (m FieldPickerModel) View() string {
 		item := m.items[idx]
 
 		plain := item.path + " = " + item.display
-		if ansi.StringWidth(plain) > listW {
-			plain = ansi.Truncate(plain, listW-1, "…")
+		if ansi.StringWidth(plain) > innerW {
+			plain = ansi.Truncate(plain, innerW-1, "…")
 		}
 
 		if i == m.cursor {
-			line := selectedStyle.Render(fmt.Sprintf("%-*s", listW, plain))
+			line := selectedStyle.Render(fmt.Sprintf("%-*s", innerW, plain))
 			lines = append(lines, line)
 		} else {
 			// Split back into path and value parts for coloring
@@ -320,7 +316,7 @@ func (m FieldPickerModel) View() string {
 
 	if sb != nil {
 		for i := range lines {
-			pad := listW - lipgloss.Width(lines[i])
+			pad := innerW - lipgloss.Width(lines[i])
 			if pad > 0 {
 				lines[i] += strings.Repeat(" ", pad)
 			}
@@ -348,8 +344,12 @@ func (m FieldPickerModel) View() string {
 
 	overlayStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(styles.PrimaryColor).
-		Padding(0, 1)
+		BorderForeground(styles.PrimaryColor)
+	if sb != nil {
+		overlayStyle = overlayStyle.Padding(0, 0, 0, 1)
+	} else {
+		overlayStyle = overlayStyle.Padding(0, 1)
+	}
 
 	return overlayStyle.Render(b.String())
 }
