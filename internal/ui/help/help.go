@@ -101,8 +101,7 @@ func (m Model) renderContent() string {
 			"URL Bar",
 			[][2]string{
 				{"Ctrl+P", "Open method selector"},
-				{"Up/Down, Enter", "Select method"},
-				{"Esc", "Close selector"},
+				{"Up/Down", "Open history"},
 				{"Type URL", "Enter request URL"},
 			},
 		},
