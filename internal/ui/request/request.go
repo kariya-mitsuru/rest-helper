@@ -258,4 +258,3 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 
 	return lipgloss.NewLayer(full, children...).ID("request")
 }
-

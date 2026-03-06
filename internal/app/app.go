@@ -43,14 +43,6 @@ type Model struct {
 	reqH     int
 	respH    int
 	availH   int
-
-	// Compositor from the last View() call, used for mouse hit-testing.
-	// Pointer wrapper so that the value-receiver View() can update it.
-	comp *compositorRef
-}
-
-type compositorRef struct {
-	c *lipgloss.Compositor
 }
 
 func New(version string) Model {
@@ -62,7 +54,6 @@ func New(version string) Model {
 		statusbar: statusbar.New(),
 		help:      help.New(version),
 		focus:     FocusURLBar,
-		comp:      &compositorRef{},
 	}
 
 	// Restore persisted UI preferences.
@@ -425,12 +416,47 @@ func centerOverlay(screenW, screenH int, rendered string) (int, int) {
 	return x, y
 }
 
-// hitTest performs a hit test using the compositor built by the last View() call.
-func (m Model) hitTest(x, y int) lipgloss.LayerHit {
-	if m.comp.c == nil {
-		return lipgloss.LayerHit{}
+// buildCompositor creates a Compositor from the current UI state.
+func (m Model) buildCompositor() *lipgloss.Compositor {
+	// Base UI layers
+	layers := []*lipgloss.Layer{
+		m.urlbar.ViewLayer(),
+		m.sidebar.ViewLayer().Y(1),
+		m.request.ViewLayer().X(m.sidebarW).Y(1),
+		m.response.ViewLayer().X(m.sidebarW).Y(1 + m.reqH),
+		m.statusbar.ViewLayer().Y(1 + m.availH),
 	}
-	return m.comp.c.Hit(x, y)
+
+	// Dropdown overlays (Z=5, above clickable children at Z=1)
+	if m.urlbar.SelectOpen() {
+		layers = append(layers, lipgloss.NewLayer(m.urlbar.DropdownView()).
+			ID("method-dropdown").Y(1).Z(5))
+	}
+	if m.request.AuthSelectOpen() {
+		layers = append(layers, lipgloss.NewLayer(m.request.AuthDropdownView()).
+			ID("auth-dropdown").X(m.sidebarW+3).Y(5).Z(5))
+	}
+
+	// Full-screen overlays (Z=50)
+	if m.response.FieldPickerVisible() {
+		fp := m.response.ViewFieldPicker()
+		x, y := centerOverlay(m.width, m.height, fp)
+		layers = append(layers, lipgloss.NewLayer(fp).
+			ID("fieldpicker").X(x).Y(y).Z(50))
+	}
+	if m.help.Visible {
+		hv := m.help.View()
+		x, y := centerOverlay(m.width, m.height, hv)
+		layers = append(layers, lipgloss.NewLayer(hv).
+			ID("help").X(x).Y(y).Z(50))
+	}
+
+	return lipgloss.NewCompositor(layers...)
+}
+
+// hitTest performs a hit test by building a compositor from the current state.
+func (m Model) hitTest(x, y int) lipgloss.LayerHit {
+	return m.buildCompositor().Hit(x, y)
 }
 
 func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
@@ -671,41 +697,7 @@ func (m Model) View() tea.View {
 		return tea.NewView("Loading...")
 	}
 
-	// Base UI layers
-	layers := []*lipgloss.Layer{
-		m.urlbar.ViewLayer(),
-		m.sidebar.ViewLayer().Y(1),
-		m.request.ViewLayer().X(m.sidebarW).Y(1),
-		m.response.ViewLayer().X(m.sidebarW).Y(1 + m.reqH),
-		m.statusbar.ViewLayer().Y(1 + m.availH),
-	}
-
-	// Dropdown overlays (Z=5, above clickable children at Z=1)
-	if m.urlbar.SelectOpen() {
-		layers = append(layers, lipgloss.NewLayer(m.urlbar.DropdownView()).
-			ID("method-dropdown").Y(1).Z(5))
-	}
-	if m.request.AuthSelectOpen() {
-		layers = append(layers, lipgloss.NewLayer(m.request.AuthDropdownView()).
-			ID("auth-dropdown").X(m.sidebarW+3).Y(5).Z(5))
-	}
-
-	// Full-screen overlays (Z=50)
-	if m.response.FieldPickerVisible() {
-		fp := m.response.ViewFieldPicker()
-		x, y := centerOverlay(m.width, m.height, fp)
-		layers = append(layers, lipgloss.NewLayer(fp).
-			ID("fieldpicker").X(x).Y(y).Z(50))
-	}
-	if m.help.Visible {
-		hv := m.help.View()
-		x, y := centerOverlay(m.width, m.height, hv)
-		layers = append(layers, lipgloss.NewLayer(hv).
-			ID("help").X(x).Y(y).Z(50))
-	}
-
-	comp := lipgloss.NewCompositor(layers...)
-	m.comp.c = comp // store for hit-testing in mouse handlers
+	comp := m.buildCompositor()
 	canvas := lipgloss.NewCanvas(m.width, m.height)
 	canvas.Compose(comp)
 
