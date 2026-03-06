@@ -546,6 +546,8 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	case "req-visibility-hint":
 		m.setFocus(FocusRequest)
 		m.request.ToggleTokenVisibility()
+	case "req-body-vscrollbar":
+		m.setFocus(FocusRequest)
 	case "request":
 		m.setFocus(FocusRequest)
 
@@ -569,6 +571,8 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 		b := hit.Bounds()
 		m.response.HandleScrollBarMouse(msg.X - b.Min.X)
 		m.response.StartDrag()
+	case "resp-vscrollbar":
+		m.setFocus(FocusResponse)
 	case "response":
 		m.setFocus(FocusResponse)
 	}
