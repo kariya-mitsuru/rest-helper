@@ -407,16 +407,10 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	full := borderStyle.Width(m.width).Height(m.height).Render(content)
 
-	// Child layers for clickable elements
-	var children []*lipgloss.Layer
-
-	// Tab buttons (Y=1 inside border)
+	// Tab buttons as initial child layers (Y=1 inside border)
 	titleW := lipgloss.Width(line0)
 	x := 1 + titleW + 2 // border(1) + title + gap(2)
-
-	tabLayers, nextX := styles.RenderTabLayers(respTabsConfig, int(m.activeTab), "resp-tab-", x, 1)
-	children = append(children, tabLayers...)
-	x = nextX
+	children, x := styles.RenderTabLayers(respTabsConfig, int(m.activeTab), "resp-tab-", x, 1)
 
 	if m.response != nil {
 		// Format toggle (or placeholder gap)

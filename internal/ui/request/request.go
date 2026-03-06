@@ -206,13 +206,9 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 	inner := lipgloss.JoinVertical(lipgloss.Left, title, content)
 	full := borderStyle.Width(m.width).Height(m.height).Render(inner)
 
-	// Child layers for clickable elements
-	var children []*lipgloss.Layer
-
-	// Tab buttons (Y=1 inside border, after title)
+	// Tab buttons as initial child layers (Y=1 inside border, after title)
 	tabX := 1 + lipgloss.Width(title) + 2 // border(1) + title + gap(2)
-	tabLayers, _ := styles.RenderTabLayers(tabsConfig, int(m.activeTab), "req-tab-", tabX, 1)
-	children = append(children, tabLayers...)
+	children, _ := styles.RenderTabLayers(tabsConfig, int(m.activeTab), "req-tab-", tabX, 1)
 
 	switch m.activeTab {
 	case TabBody:
