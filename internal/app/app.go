@@ -14,6 +14,7 @@ import (
 	"rest-helper/internal/http"
 	"rest-helper/internal/storage"
 	"rest-helper/internal/ui/help"
+	"rest-helper/internal/ui/historypicker"
 	"rest-helper/internal/ui/request"
 	"rest-helper/internal/ui/response"
 	"rest-helper/internal/ui/sidebar"
@@ -28,6 +29,8 @@ type Model struct {
 	sidebar   sidebar.Model
 	statusbar statusbar.Model
 	help      help.Model
+
+	historyPicker *historypicker.Model
 
 	lastReq        *http.Request
 	lastRawBody    string
@@ -121,11 +124,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help, cmd = m.help.Update(msg)
 			return m, cmd
 		}
+		if m.historyPicker != nil {
+			hp, cmd := m.historyPicker.Update(msg)
+			m.historyPicker = &hp
+			return m, cmd
+		}
 		if m.response.FieldPickerVisible() {
 			cmd := m.response.UpdateFieldPicker(msg)
 			return m, cmd
 		}
 		return m.handleMouseWheel(msg)
+
+	case historypicker.HistorySelectedMsg:
+		m.historyPicker = nil
+		m.loadFromHistory(msg.Entry)
+		return m, nil
+
+	case historypicker.HistoryClosedMsg:
+		m.historyPicker = nil
+		return m, nil
+
+	case historypicker.HistoryChangedMsg:
+		// Refresh sidebar entry count after history changes
+		cmds = append(cmds, m.sidebar.LoadHistory())
 
 	case response.FieldCopiedMsg:
 		m.response.CloseFieldPicker()
@@ -141,6 +162,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		// History picker overlay captures all input when visible
+		if m.historyPicker != nil {
+			hp, cmd := m.historyPicker.Update(msg)
+			m.historyPicker = &hp
+			return m, cmd
+		}
+
 		// Field picker overlay captures all input when visible
 		if m.response.FieldPickerVisible() {
 			cmd := m.response.UpdateFieldPicker(msg)
@@ -225,7 +253,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, Keys.HistoryTab):
-			m.setFocus(FocusSidebar)
+			m.openHistoryPicker()
 			return m, nil
 
 		case key.Matches(msg, Keys.ResponseBodyTab):
@@ -237,6 +265,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setFocus(FocusResponse)
 			m.response.SetTab(response.TabHeaders)
 			return m, nil
+		}
+
+		// URL bar: up/down opens history picker
+		if m.focus == FocusURLBar {
+			switch msg.String() {
+			case "up", "down":
+				m.openHistoryPicker()
+				return m, nil
+			}
 		}
 
 	case http.ResponseMsg:
@@ -256,6 +293,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sidebar.HistorySelectedMsg:
 		m.loadFromHistory(msg.Entry)
 		return m, nil
+	}
+
+	// Forward to history picker if open
+	if m.historyPicker != nil {
+		hp, cmd := m.historyPicker.Update(msg)
+		m.historyPicker = &hp
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
 
 	// Forward to sidebar (it needs historyLoadedMsg etc)
@@ -396,6 +442,12 @@ func (m *Model) loadFromHistory(entry storage.HistoryEntry) {
 	}
 }
 
+func (m *Model) openHistoryPicker() {
+	entries, _ := storage.ListHistory(200)
+	hp := historypicker.New(entries, m.width, m.height)
+	m.historyPicker = &hp
+}
+
 // centerOverlay returns X, Y to center the rendered overlay within the screen.
 func centerOverlay(screenW, screenH int, rendered string) (int, int) {
 	x := (screenW - lipgloss.Width(rendered)) / 2
@@ -431,6 +483,11 @@ func (m Model) buildCompositor() *lipgloss.Compositor {
 	}
 
 	// Full-screen overlays (Z=50)
+	if m.historyPicker != nil {
+		hpv := m.historyPicker.View()
+		layers = append(layers, lipgloss.NewLayer(hpv).
+			ID("historypicker").Y(1).Z(50))
+	}
 	if m.response.FieldPickerVisible() {
 		fp := m.response.ViewFieldPicker()
 		x, y := centerOverlay(m.width, m.height, fp)

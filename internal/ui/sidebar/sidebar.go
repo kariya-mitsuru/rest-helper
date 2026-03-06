@@ -4,7 +4,6 @@ package sidebar
 
 import (
 	"fmt"
-	"net/url"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -359,7 +358,7 @@ func (m Model) view() string {
 
 			// method(7) + space(1) + status
 			pathW := contentW - 8 - statusW
-			path := shortenURL(entry.URL, pathW)
+			path := truncateURL(entry.URL, pathW)
 
 			if isSelected || isCursor {
 				// Build plain text, apply a single style for the whole line
@@ -404,21 +403,12 @@ func (m Model) view() string {
 		Render(b.String())
 }
 
-func shortenURL(rawURL string, maxLen int) string {
+func truncateURL(rawURL string, maxLen int) string {
 	if maxLen < 2 {
 		return "…"
 	}
-	u, err := url.Parse(rawURL)
-	if err != nil || u.Path == "" {
-		if len(rawURL) > maxLen {
-			return rawURL[:maxLen-1] + "…"
-		}
-		return rawURL
+	if len(rawURL) > maxLen {
+		return rawURL[:maxLen-1] + "…"
 	}
-
-	path := u.Path
-	if len(path) > maxLen {
-		path = path[:maxLen-1] + "…"
-	}
-	return path
+	return rawURL
 }
