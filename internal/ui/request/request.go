@@ -166,6 +166,30 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
+// HandleWheel processes a mouse wheel event regardless of focus state.
+func (m *Model) HandleWheel(msg tea.MouseWheelMsg) {
+	switch m.activeTab {
+	case TabBody:
+		key := tea.KeyDown
+		if msg.Button == tea.MouseWheelUp {
+			key = tea.KeyUp
+		}
+		m.body.textarea, _ = m.body.textarea.Update(tea.KeyPressMsg{Code: key})
+	case TabHeaders:
+		if msg.Button == tea.MouseWheelUp {
+			if m.headers.cursor > 0 {
+				m.headers.cursor--
+				m.headers.ensureCursorVisible()
+			}
+		} else {
+			if m.headers.cursor < len(m.headers.pairs)-1 {
+				m.headers.cursor++
+				m.headers.ensureCursorVisible()
+			}
+		}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if !m.focused {
 		return m, nil

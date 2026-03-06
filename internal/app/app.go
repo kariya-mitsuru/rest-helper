@@ -580,6 +580,8 @@ func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 	hit := m.hitTest(msg.X, msg.Y)
 
 	switch hit.ID() {
+	case "request":
+		m.request.HandleWheel(msg)
 	case "response":
 		m.response.HandleWheel(msg)
 	}
