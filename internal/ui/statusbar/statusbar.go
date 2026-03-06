@@ -12,9 +12,8 @@ import (
 )
 
 type Model struct {
-	text         string
-	historyCount int
-	width        int
+	text  string
+	width int
 }
 
 func New() Model {
@@ -25,10 +24,6 @@ func New() Model {
 
 func (m *Model) SetText(text string) {
 	m.text = text
-}
-
-func (m *Model) SetHistoryCount(count int) {
-	m.historyCount = count
 }
 
 func (m *Model) SetWidth(w int) {
@@ -48,19 +43,16 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 
 	left := m.text
 	helpLabel := "?/F1: help"
-	right := fmt.Sprintf("History: %d items | %s", m.historyCount, helpLabel)
 
-	spaces := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 4
+	spaces := m.width - lipgloss.Width(left) - lipgloss.Width(helpLabel) - 4
 	if spaces < 1 {
 		spaces = 1
 	}
 
-	content := left + fmt.Sprintf("%*s", spaces, "") + right
+	content := left + fmt.Sprintf("%*s", spaces, "") + helpLabel
 	full := style.Render(content)
 
-	// Help label position: padding(1) + left + spaces + "History: N items | "
-	helpPrefix := fmt.Sprintf("History: %d items | ", m.historyCount)
-	helpX := 1 + lipgloss.Width(left) + spaces + lipgloss.Width(helpPrefix)
+	helpX := 1 + lipgloss.Width(left) + spaces
 	helpRendered := lipgloss.NewStyle().
 		Background(lipgloss.Color("#1F2937")).
 		Foreground(styles.MutedColor).
