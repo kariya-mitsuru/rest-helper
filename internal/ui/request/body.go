@@ -37,7 +37,8 @@ func NewBody() BodyModel {
 	ta.CharLimit = 0
 	ta.SetWidth(60)
 	ta.SetHeight(10)
-	ta.ShowLineNumbers = true
+	ta.ShowLineNumbers = false
+	ta.Prompt = ""
 
 	return BodyModel{
 		textarea: ta,
