@@ -17,7 +17,6 @@ import (
 	"rest-helper/internal/ui/historypicker"
 	"rest-helper/internal/ui/request"
 	"rest-helper/internal/ui/response"
-	"rest-helper/internal/ui/sidebar"
 	"rest-helper/internal/ui/statusbar"
 	"rest-helper/internal/ui/urlbar"
 )
@@ -26,7 +25,6 @@ type Model struct {
 	urlbar    urlbar.Model
 	request   request.Model
 	response  response.Model
-	sidebar   sidebar.Model
 	statusbar statusbar.Model
 	help      help.Model
 
@@ -42,10 +40,9 @@ type Model struct {
 	ready  bool
 
 	// Layout values
-	sidebarW int
-	reqH     int
-	respH    int
-	availH   int
+	reqH   int
+	respH  int
+	availH int
 }
 
 func New(version string) Model {
@@ -53,7 +50,6 @@ func New(version string) Model {
 		urlbar:    urlbar.New(),
 		request:   request.New(),
 		response:  response.New(),
-		sidebar:   sidebar.New(),
 		statusbar: statusbar.New(),
 		help:      help.New(version),
 		focus:     FocusURLBar,
@@ -78,7 +74,6 @@ func (m Model) Init() tea.Cmd {
 		m.urlbar.Init(),
 		m.request.Init(),
 		m.response.Init(),
-		m.sidebar.LoadHistory(),
 	)
 }
 
@@ -109,11 +104,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMotionMsg:
 		if m.response.IsDragging() {
-			relX := msg.X - m.sidebarW - 1
-			if relX < 0 {
-				relX = 0
-			}
-			m.response.HandleScrollBarMouse(relX)
+			m.response.HandleScrollBarMouse(msg.X)
 			return m, nil
 		}
 		return m, nil
@@ -145,8 +136,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case historypicker.HistoryChangedMsg:
-		// Refresh sidebar entry count after history changes
-		cmds = append(cmds, m.sidebar.LoadHistory())
+		return m, nil
 
 	case response.FieldCopiedMsg:
 		m.response.CloseFieldPicker()
@@ -289,10 +279,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.saveHistory(msg.Response))
 		}
 		return m, tea.Batch(cmds...)
-
-	case sidebar.HistorySelectedMsg:
-		m.loadFromHistory(msg.Entry)
-		return m, nil
 	}
 
 	// Forward to history picker if open
@@ -303,14 +289,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 	}
-
-	// Forward to sidebar (it needs historyLoadedMsg etc)
-	var sideCmd tea.Cmd
-	m.sidebar, sideCmd = m.sidebar.Update(msg)
-	if sideCmd != nil {
-		cmds = append(cmds, sideCmd)
-	}
-	m.statusbar.SetHistoryCount(m.sidebar.EntryCount())
 
 	m.statusbar, _ = m.statusbar.Update(msg)
 
@@ -338,13 +316,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if w := m.response.GetWrapMode(); w != prevWrap {
 			_ = storage.SetSetting(storage.KeyResponseWrap, fmt.Sprintf("%t", w))
-		}
-	case FocusSidebar:
-		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
-			cmd := m.handleSidebarKey(keyMsg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
 		}
 	}
 
@@ -406,7 +377,7 @@ func (m *Model) saveHistory(resp *http.Response) tea.Cmd {
 
 	return func() tea.Msg {
 		storage.SaveHistory(entry)
-		return sidebar.HistoryUpdatedMsg{}
+		return nil
 	}
 }
 
@@ -466,9 +437,8 @@ func (m Model) buildCompositor() *lipgloss.Compositor {
 	// Base UI layers
 	layers := []*lipgloss.Layer{
 		m.urlbar.ViewLayer(),
-		m.sidebar.ViewLayer().Y(1),
-		m.request.ViewLayer().X(m.sidebarW).Y(1),
-		m.response.ViewLayer().X(m.sidebarW).Y(1 + m.reqH),
+		m.request.ViewLayer().Y(1),
+		m.response.ViewLayer().Y(1 + m.reqH),
 		m.statusbar.ViewLayer().Y(1 + m.availH),
 	}
 
@@ -479,7 +449,7 @@ func (m Model) buildCompositor() *lipgloss.Compositor {
 	}
 	if m.request.AuthSelectOpen() {
 		layers = append(layers, lipgloss.NewLayer(m.request.AuthDropdownView()).
-			ID("auth-dropdown").X(m.sidebarW+3).Y(5).Z(5))
+			ID("auth-dropdown").X(3).Y(5).Z(5))
 	}
 
 	// Full-screen overlays (Z=50)
@@ -538,9 +508,6 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 		return *m, nil
 	}
 
-	b := hit.Bounds()
-	relY := msg.Y - b.Min.Y
-
 	switch hit.ID() {
 	// --- URL bar ---
 	case "method-btn":
@@ -558,14 +525,6 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 		m.help.Toggle()
 	case "statusbar":
 		// no action
-
-	// --- Sidebar ---
-	case "sidebar":
-		m.setFocus(FocusSidebar)
-		cmd := m.sidebar.ClickAt(relY)
-		if cmd != nil {
-			return *m, cmd
-		}
 
 	// --- Request panel ---
 	case "req-tab-body":
@@ -621,12 +580,6 @@ func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 	hit := m.hitTest(msg.X, msg.Y)
 
 	switch hit.ID() {
-	case "sidebar":
-		if msg.Button == tea.MouseWheelUp {
-			m.sidebar.CursorUp()
-		} else {
-			m.sidebar.CursorDown()
-		}
 	case "response":
 		m.response.HandleWheel(msg)
 	}
@@ -635,7 +588,7 @@ func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 }
 
 func (m *Model) cycleFocus(dir int) {
-	panels := []FocusPanel{FocusURLBar, FocusSidebar, FocusRequest, FocusResponse}
+	panels := []FocusPanel{FocusURLBar, FocusRequest, FocusResponse}
 	current := 0
 	for i, p := range panels {
 		if p == m.focus {
@@ -652,7 +605,6 @@ func (m *Model) setFocus(panel FocusPanel) {
 	m.urlbar.Blur()
 	m.request.Blur()
 	m.response.Blur()
-	m.sidebar.Blur()
 
 	m.focus = panel
 	switch panel {
@@ -662,46 +614,7 @@ func (m *Model) setFocus(panel FocusPanel) {
 		m.request.Focus()
 	case FocusResponse:
 		m.response.Focus()
-	case FocusSidebar:
-		m.sidebar.Focus()
 	}
-}
-
-func (m *Model) handleSidebarKey(msg tea.KeyPressMsg) tea.Cmd {
-	// Confirmation mode: only y/n/esc
-	if m.sidebar.InConfirmMode() {
-		switch msg.String() {
-		case "y", "Y":
-			return m.sidebar.ConfirmYes()
-		default:
-			m.sidebar.ConfirmCancel()
-			return nil
-		}
-	}
-
-	switch msg.String() {
-	case "up", "k":
-		m.sidebar.CursorUp()
-	case "down", "j":
-		m.sidebar.CursorDown()
-	case "enter":
-		return m.sidebar.SelectCurrent()
-	case "space":
-		m.sidebar.ToggleSelection()
-	case "d":
-		return m.sidebar.DeleteSingleOrSelected()
-	case "D":
-		m.sidebar.RequestDeleteOlder()
-	case "ctrl+d":
-		m.sidebar.RequestClearAll()
-	case "ctrl+x":
-		m.sidebar.RequestDeleteDuplicates()
-	case "esc":
-		if m.sidebar.HasSelection() {
-			m.sidebar.ClearSelection()
-		}
-	}
-	return nil
 }
 
 func (m *Model) layout() {
@@ -709,15 +622,6 @@ func (m *Model) layout() {
 	m.statusbar.SetWidth(m.width)
 	m.help.SetSize(m.width, m.height)
 
-	sidebarW := m.width / 4
-	if sidebarW < 20 {
-		sidebarW = 20
-	}
-	if sidebarW > 40 {
-		sidebarW = 40
-	}
-
-	rightW := m.width - sidebarW
 	availH := m.height - 2
 
 	reqH := availH * 2 / 5
@@ -730,16 +634,12 @@ func (m *Model) layout() {
 		respH = 5
 	}
 
-	m.sidebarW = sidebarW
 	m.reqH = reqH
 	m.respH = respH
 	m.availH = availH
 
-	m.sidebar.SetSize(sidebarW, availH)
-	m.request.SetSize(rightW, reqH)
-	m.response.SetSize(rightW, respH)
-
-	m.statusbar.SetHistoryCount(m.sidebar.EntryCount())
+	m.request.SetSize(m.width, reqH)
+	m.response.SetSize(m.width, respH)
 }
 
 func (m Model) View() tea.View {

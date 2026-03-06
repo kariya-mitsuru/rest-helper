@@ -44,6 +44,7 @@ type Model struct {
 	scroll   int
 	width    int
 	height   int
+	innerW   int // content width locked at open time
 	fixedVis int // visible rows locked at open time
 
 	confirm      confirmAction
@@ -65,6 +66,29 @@ func New(entries []storage.HistoryEntry, width, height int) Model {
 		width:    width,
 		height:   height,
 	}
+
+	// Compute content width from entries
+	helpW := len("↑↓ nav  enter select  space mark  d del  esc close")
+	cw := helpW
+	for _, e := range entries {
+		// method(7) + space(1) + url + status(max 4)
+		w := 8 + len(e.URL) + 4
+		if w > cw {
+			cw = w
+		}
+	}
+	// Clamp to screen: innerW + border(2) + padding(2) <= width
+	maxW := width - 4
+	if maxW < 30 {
+		maxW = 30
+	}
+	if cw > maxW {
+		cw = maxW
+	}
+	m.innerW = cw
+
+	ti.SetWidth(cw - 2) // minus prompt "/ "
+
 	m.applyFilter()
 	m.fixedVis = m.visibleRows()
 	return m
@@ -339,10 +363,7 @@ type historyReloadedMsg struct {
 
 
 func (m Model) View() string {
-	maxW := m.width - 4
-	if maxW < 30 {
-		maxW = 30
-	}
+	innerW := m.innerW
 
 	title := lipgloss.NewStyle().Bold(true).
 		Foreground(styles.PrimaryColor).
@@ -357,12 +378,6 @@ func (m Model) View() string {
 			Render(fmt.Sprintf(" [%d sel]", sel))
 	}
 	title += styles.MutedStyle.Render(countInfo)
-
-	// Compute content width
-	innerW := maxW
-	if innerW > 80 {
-		innerW = 80
-	}
 
 	m.filter.SetWidth(innerW - 2)
 	filterLine := m.filter.View()
