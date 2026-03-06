@@ -55,6 +55,8 @@ type Model struct {
 	dragging        bool          // true while dragging the horizontal scrollbar
 	fieldPicker     *FieldPickerModel
 	activeTab       responseTab
+	screenW         int // full terminal width (for overlay sizing)
+	screenH         int // full terminal height
 }
 
 func New() Model {
@@ -264,7 +266,7 @@ func (m Model) FieldPickerVisible() bool {
 }
 
 func (m *Model) openFieldPicker() {
-	fp := NewFieldPicker(m.response.Body, m.width, m.height)
+	fp := NewFieldPicker(m.response.Body, m.screenW, m.screenH)
 	m.fieldPicker = &fp
 }
 
@@ -571,6 +573,11 @@ func (m Model) renderMeta() string {
 		styles.MutedStyle.Render(fmt.Sprintf("%dms", resp.Duration.Milliseconds())),
 		styles.MutedStyle.Render(formatSize(resp.Size)),
 	)
+}
+
+func (m *Model) SetScreenSize(w, h int) {
+	m.screenW = w
+	m.screenH = h
 }
 
 func (m *Model) SetSize(w, h int) {

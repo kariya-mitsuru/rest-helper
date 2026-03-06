@@ -640,6 +640,7 @@ func (m *Model) layout() {
 
 	m.request.SetSize(m.width, reqH)
 	m.response.SetSize(m.width, respH)
+	m.response.SetScreenSize(m.width, m.height)
 }
 
 func (m Model) View() tea.View {

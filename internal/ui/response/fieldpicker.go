@@ -50,7 +50,7 @@ func NewFieldPicker(body string, width, height int) FieldPickerModel {
 	ti := textinput.New()
 	ti.Placeholder = "Filter fields..."
 	ti.Prompt = "/ "
-	ti.SetWidth(width - 6) // fit inside overlay border(2) + padding(2) + prompt(2)
+	ti.SetWidth(width - 7) // border(2) + padding(2) + prompt(2) + cursor(1)
 	ti.Focus()
 
 	m := FieldPickerModel{
@@ -237,8 +237,8 @@ func (m FieldPickerModel) View() string {
 		innerW = maxW
 	}
 
-	// Update filter width to match content width (minus prompt "/ ")
-	m.filter.SetWidth(innerW - 2)
+	// Update filter width to match content width (prompt "/ " (2) + cursor (1))
+	m.filter.SetWidth(innerW - 3)
 	filterLine := m.filter.View()
 
 	vis := m.visibleRows()
