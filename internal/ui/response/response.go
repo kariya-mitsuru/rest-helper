@@ -53,6 +53,8 @@ type Model struct {
 	rawLines        []string      // pre-wrap content lines for horizontal scroll
 	maxLineWidth    int           // max visible width among rawLines
 	dragging        bool          // true while dragging the horizontal scrollbar
+	vDragging       bool          // true while dragging the vertical scrollbar
+	vDragBaseY      int           // screen Y of scrollbar top when drag started
 	fieldPicker     *FieldPickerModel
 	activeTab       responseTab
 	screenW         int // full terminal width (for overlay sizing)
@@ -563,9 +565,48 @@ func (m *Model) StopDrag() {
 	m.dragging = false
 }
 
-// IsDragging returns whether the scrollbar is currently being dragged.
+// IsDragging returns whether the horizontal scrollbar is currently being dragged.
 func (m Model) IsDragging() bool {
 	return m.dragging
+}
+
+// HandleVScrollBarMouse maps a mouse Y position to viewport YOffset.
+func (m *Model) HandleVScrollBarMouse(localY int) {
+	total := m.viewport.TotalLineCount()
+	vis := m.viewport.Height()
+	if vis <= 1 || total <= vis {
+		return
+	}
+	maxOff := total - vis
+	newOffset := maxOff * localY / (vis - 1)
+	if newOffset < 0 {
+		newOffset = 0
+	}
+	if newOffset > maxOff {
+		newOffset = maxOff
+	}
+	m.viewport.SetYOffset(newOffset)
+}
+
+// StartVDrag marks the vertical scrollbar as being dragged.
+func (m *Model) StartVDrag(baseY int) {
+	m.vDragging = true
+	m.vDragBaseY = baseY
+}
+
+// StopVDrag ends a vertical scrollbar drag.
+func (m *Model) StopVDrag() {
+	m.vDragging = false
+}
+
+// IsVDragging returns whether the vertical scrollbar is currently being dragged.
+func (m Model) IsVDragging() bool {
+	return m.vDragging
+}
+
+// VDragBaseY returns the screen Y of the scrollbar top when drag started.
+func (m Model) VDragBaseY() int {
+	return m.vDragBaseY
 }
 
 // renderTitle returns the fixed "Response" prefix.

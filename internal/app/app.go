@@ -100,11 +100,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.response.StopDrag()
 			return m, nil
 		}
+		if m.response.IsVDragging() {
+			m.response.StopVDrag()
+			return m, nil
+		}
 		return m, nil
 
 	case tea.MouseMotionMsg:
 		if m.response.IsDragging() {
 			m.response.HandleScrollBarMouse(msg.X)
+			return m, nil
+		}
+		if m.response.IsVDragging() {
+			m.response.HandleVScrollBarMouse(msg.Y - m.response.VDragBaseY())
 			return m, nil
 		}
 		return m, nil
@@ -573,6 +581,9 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 		m.response.StartDrag()
 	case "resp-vscrollbar":
 		m.setFocus(FocusResponse)
+		b := hit.Bounds()
+		m.response.HandleVScrollBarMouse(msg.Y - b.Min.Y)
+		m.response.StartVDrag(b.Min.Y)
 	case "response":
 		m.setFocus(FocusResponse)
 	}
