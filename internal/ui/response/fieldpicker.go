@@ -210,11 +210,11 @@ func (m FieldPickerModel) Update(msg tea.Msg) (FieldPickerModel, tea.Cmd) {
 				m.scroll = m.cursor - vis + 1
 			}
 			return m, nil
-		case "home":
+		case "home", "ctrl+home":
 			m.cursor = 0
 			m.scroll = 0
 			return m, nil
-		case "end":
+		case "end", "ctrl+end":
 			m.cursor = len(m.filtered) - 1
 			if m.cursor < 0 {
 				m.cursor = 0

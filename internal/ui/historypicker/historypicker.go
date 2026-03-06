@@ -234,12 +234,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "home":
+		case "home", "ctrl+home":
 			m.cursor = 0
 			m.scroll = 0
 			return m, nil
 
-		case "end":
+		case "end", "ctrl+end":
 			m.cursor = len(m.filtered) - 1
 			if m.cursor < 0 {
 				m.cursor = 0

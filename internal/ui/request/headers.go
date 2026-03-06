@@ -222,6 +222,14 @@ func (m HeadersModel) Update(msg tea.Msg) (HeadersModel, tea.Cmd) {
 					return m, nil
 				}
 			}
+		case "ctrl+home":
+			m.cursor = 0
+			m.updateInputFocus()
+			return m, nil
+		case "ctrl+end":
+			m.cursor = len(m.pairs) - 1
+			m.updateInputFocus()
+			return m, nil
 		case "ctrl+d":
 			if len(m.pairs) > 1 {
 				m.pairs = append(m.pairs[:m.cursor], m.pairs[m.cursor+1:]...)
