@@ -234,6 +234,22 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "home":
+			m.cursor = 0
+			m.scroll = 0
+			return m, nil
+
+		case "end":
+			m.cursor = len(m.filtered) - 1
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+			vis := m.visibleRows()
+			if m.cursor >= m.scroll+vis {
+				m.scroll = m.cursor - vis + 1
+			}
+			return m, nil
+
 		case "enter":
 			if entry, ok := m.currentEntry(); ok {
 				return m, func() tea.Msg {
