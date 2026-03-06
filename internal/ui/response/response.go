@@ -280,11 +280,7 @@ func (m Model) FieldPickerVisible() bool {
 	return m.fieldPicker != nil
 }
 
-// OpenFieldPicker opens the copy field picker for the current response.
-func (m *Model) OpenFieldPicker() {
-	if m.response == nil || m.response.Body == "" {
-		return
-	}
+func (m *Model) openFieldPicker() {
 	fp := NewFieldPicker(m.response.Body, m.width, m.height)
 	m.fieldPicker = &fp
 }
@@ -384,7 +380,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		case "y":
 			if m.activeTab == TabBody && m.response != nil && m.response.Body != "" {
-				m.OpenFieldPicker()
+				m.openFieldPicker()
 				return m, nil
 			}
 		case "ctrl+w":
