@@ -264,17 +264,6 @@ func (m *Model) SetTab(tab responseTab) {
 	}
 }
 
-// CycleTab switches between Body and Headers tabs.
-func (m *Model) CycleTab() {
-	if m.activeTab == TabBody {
-		m.activeTab = TabHeaders
-	} else {
-		m.activeTab = TabBody
-	}
-	m.xOffset = 0
-	m.refreshContent()
-}
-
 // FieldPickerVisible returns whether the field picker overlay is open.
 func (m Model) FieldPickerVisible() bool {
 	return m.fieldPicker != nil
@@ -370,9 +359,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "tab":
-			m.CycleTab()
-			return m, nil
 		case "ctrl+t":
 			if m.activeTab == TabBody {
 				m.ToggleFormat()
