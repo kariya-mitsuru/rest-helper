@@ -290,20 +290,16 @@ func (m *Model) OpenFieldPicker() {
 }
 
 // UpdateFieldPicker forwards a message to the field picker.
+// The caller must check FieldPickerVisible() before calling this.
 func (m *Model) UpdateFieldPicker(msg tea.Msg) tea.Cmd {
-	if m.fieldPicker == nil {
-		return nil
-	}
 	fp, cmd := m.fieldPicker.Update(msg)
 	m.fieldPicker = &fp
 	return cmd
 }
 
 // ViewFieldPicker renders the field picker overlay.
+// The caller must check FieldPickerVisible() before calling this.
 func (m Model) ViewFieldPicker() string {
-	if m.fieldPicker == nil {
-		return ""
-	}
 	return m.fieldPicker.View()
 }
 

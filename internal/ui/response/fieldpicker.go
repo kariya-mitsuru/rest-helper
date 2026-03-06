@@ -148,6 +148,11 @@ func (m FieldPickerModel) visibleRows() int {
 
 func (m FieldPickerModel) Update(msg tea.Msg) (FieldPickerModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.MouseWheelMsg:
+		if msg.Button == tea.MouseWheelUp {
+			return m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+		}
+		return m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "esc":

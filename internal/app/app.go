@@ -122,14 +122,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		if m.response.FieldPickerVisible() {
-			// Convert wheel to up/down key for the field picker
-			var keyMsg tea.KeyPressMsg
-			if msg.Button == tea.MouseWheelUp {
-				keyMsg = tea.KeyPressMsg{Code: tea.KeyUp}
-			} else {
-				keyMsg = tea.KeyPressMsg{Code: tea.KeyDown}
-			}
-			cmd := m.response.UpdateFieldPicker(keyMsg)
+			cmd := m.response.UpdateFieldPicker(msg)
 			return m, cmd
 		}
 		return m.handleMouseWheel(msg)
