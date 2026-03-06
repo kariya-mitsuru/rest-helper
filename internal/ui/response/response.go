@@ -33,15 +33,9 @@ const (
 	TabHeaders
 )
 
-type respTabInfo struct {
-	name string
-	tab  responseTab
-	key  string
-}
-
-var respTabsConfig = []respTabInfo{
-	{"Body", TabBody, "R"},
-	{"Headers", TabHeaders, "D"},
+var respTabsConfig = []styles.TabDef{
+	{"Body", "R", int(TabBody)},
+	{"Headers", "D", int(TabHeaders)},
 }
 
 type Model struct {
@@ -420,11 +414,7 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 	titleW := lipgloss.Width(line0)
 	x := 1 + titleW + 2 // border(1) + title + gap(2)
 
-	var tabDefs []styles.TabDef
-	for _, t := range respTabsConfig {
-		tabDefs = append(tabDefs, styles.TabDef{Name: t.name, Key: t.key, Active: t.tab == m.activeTab})
-	}
-	tabLayers, nextX := styles.RenderTabLayers(tabDefs, "resp-tab-", x, 1)
+	tabLayers, nextX := styles.RenderTabLayers(respTabsConfig, int(m.activeTab), "resp-tab-", x, 1)
 	children = append(children, tabLayers...)
 	x = nextX
 

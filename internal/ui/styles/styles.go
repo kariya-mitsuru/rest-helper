@@ -78,22 +78,23 @@ var (
 	BoldStyle  = lipgloss.NewStyle().Bold(true)
 )
 
-// TabDef describes a tab for RenderTabLayers.
+// TabDef describes a tab used for both configuration and rendering.
 type TabDef struct {
-	Name   string
-	Key    string
-	Active bool
+	Name  string
+	Key   string
+	Index int
 }
 
 // RenderTabLayers creates child layers for a row of tabs.
+// activeIndex indicates which tab is currently active.
 // Returns the layers and the next X position after the last tab.
-func RenderTabLayers(tabs []TabDef, idPrefix string, startX, y int) ([]*lipgloss.Layer, int) {
+func RenderTabLayers(tabs []TabDef, activeIndex int, idPrefix string, startX, y int) ([]*lipgloss.Layer, int) {
 	x := startX
 	var layers []*lipgloss.Layer
 	for _, t := range tabs {
 		label := t.Name + " [Alt+" + t.Key + "]"
 		var rendered string
-		if t.Active {
+		if t.Index == activeIndex {
 			rendered = ActiveTab.Render(label)
 		} else {
 			rendered = InactiveTab.Render(label)

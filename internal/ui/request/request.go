@@ -17,16 +17,10 @@ const (
 	TabAuth
 )
 
-type tabInfo struct {
-	name string
-	tab  Tab
-	key  string
-}
-
-var tabsConfig = []tabInfo{
-	{"Body", TabBody, "B"},
-	{"Headers", TabHeaders, "E"},
-	{"Auth", TabAuth, "A"},
+var tabsConfig = []styles.TabDef{
+	{"Body", "B", int(TabBody)},
+	{"Headers", "E", int(TabHeaders)},
+	{"Auth", "A", int(TabAuth)},
 }
 
 type Model struct {
@@ -217,11 +211,7 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 
 	// Tab buttons (Y=1 inside border, after title)
 	tabX := 1 + lipgloss.Width(title) + 2 // border(1) + title + gap(2)
-	var tabDefs []styles.TabDef
-	for _, t := range tabsConfig {
-		tabDefs = append(tabDefs, styles.TabDef{Name: t.name, Key: t.key, Active: t.tab == m.activeTab})
-	}
-	tabLayers, _ := styles.RenderTabLayers(tabDefs, "req-tab-", tabX, 1)
+	tabLayers, _ := styles.RenderTabLayers(tabsConfig, int(m.activeTab), "req-tab-", tabX, 1)
 	children = append(children, tabLayers...)
 
 	switch m.activeTab {
