@@ -444,13 +444,29 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 			ID("resp-wrap-toggle").
 			X(x).Y(1).Z(1))
 
-		// Scrollbar
+		// Horizontal scrollbar
 		if !m.wrapMode && m.maxLineWidth > m.contentWidth() {
 			sb := m.renderHScrollBar()
 			sbY := m.ScrollBarRelY()
 			children = append(children, lipgloss.NewLayer(sb).
 				ID("resp-scrollbar").
 				X(1).Y(sbY).Z(1))
+		}
+
+		// Vertical scrollbar
+		total := m.viewport.TotalLineCount()
+		vis := m.viewport.Height()
+		if total > vis {
+			sb := styles.VScrollbar(total, vis, m.viewport.YOffset())
+			sbStr := strings.Join(sb, "\n")
+			// meta line offset: title(1) + meta(1 if present)
+			sbY := 2
+			if m.renderMeta() != "" {
+				sbY = 3
+			}
+			children = append(children, lipgloss.NewLayer(sbStr).
+				ID("resp-vscrollbar").
+				X(m.width-2).Y(sbY).Z(1))
 		}
 	}
 

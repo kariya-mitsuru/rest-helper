@@ -3,6 +3,8 @@
 package request
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -241,6 +243,17 @@ func (m Model) ViewLayer() *lipgloss.Layer {
 		children = append(children, lipgloss.NewLayer(formatLabel).
 			ID("req-format-toggle").
 			X(3).Y(m.height-2).Z(1)) // border(1) + indent(2)
+
+		// Vertical scrollbar
+		total := m.body.textarea.LineCount()
+		vis := m.body.textarea.Height()
+		if total > vis {
+			sb := styles.VScrollbar(total, vis, m.body.textarea.ScrollYOffset())
+			sbStr := strings.Join(sb, "\n")
+			children = append(children, lipgloss.NewLayer(sbStr).
+				ID("req-body-vscrollbar").
+				X(m.width-2).Y(2).Z(1)) // border(1) + title(1)
+		}
 
 	case TabAuth:
 		// Auth type button

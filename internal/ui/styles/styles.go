@@ -107,6 +107,40 @@ func RenderTabLayers(tabs []TabDef, activeIndex int, idPrefix string, startX, y 
 	return layers, x
 }
 
+// VScrollbar returns a vertical scrollbar column as a slice of strings (one per row).
+// total is the total number of items, visible is the number of visible rows,
+// and offset is the index of the first visible item.
+// Returns nil if no scrollbar is needed (all items visible).
+func VScrollbar(total, visible, offset int) []string {
+	if total <= visible {
+		return nil
+	}
+
+	track := make([]string, visible)
+	thumbSize := visible * visible / total
+	if thumbSize < 1 {
+		thumbSize = 1
+	}
+	maxOffset := total - visible
+	maxThumbPos := visible - thumbSize
+	thumbPos := 0
+	if maxOffset > 0 {
+		thumbPos = offset * maxThumbPos / maxOffset
+	}
+
+	trackStyle := lipgloss.NewStyle().Foreground(BorderColor)
+	thumbStyle := lipgloss.NewStyle().Foreground(MutedColor)
+
+	for i := range visible {
+		if i >= thumbPos && i < thumbPos+thumbSize {
+			track[i] = thumbStyle.Render("┃")
+		} else {
+			track[i] = trackStyle.Render("│")
+		}
+	}
+	return track
+}
+
 func MethodStyle(method string) lipgloss.Style {
 	color, ok := MethodColors[method]
 	if !ok {

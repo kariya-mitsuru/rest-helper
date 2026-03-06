@@ -284,6 +284,7 @@ func (m HeadersModel) View() string {
 		end = len(m.pairs)
 	}
 
+	sb := styles.VScrollbar(len(m.pairs), visible, m.scrollOffset)
 	for i := m.scrollOffset; i < end; i++ {
 		p := m.pairs[i]
 		prefix := "  "
@@ -292,7 +293,11 @@ func (m HeadersModel) View() string {
 		}
 		keyView := fixedWidth(p.key.View(), keyColW)
 		valView := fixedWidth(p.value.View(), valColW)
-		b.WriteString(fmt.Sprintf("%s%s  %s", prefix, keyView, valView))
+		line := fmt.Sprintf("%s%s  %s", prefix, keyView, valView)
+		if sb != nil {
+			line += sb[i-m.scrollOffset]
+		}
+		b.WriteString(line)
 		b.WriteString("\n")
 	}
 

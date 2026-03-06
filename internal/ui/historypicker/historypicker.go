@@ -420,6 +420,14 @@ func (m Model) View() string {
 		lines = append(lines, "")
 	}
 
+	// Append vertical scrollbar
+	sb := styles.VScrollbar(len(m.filtered), vis, m.scroll)
+	if sb != nil {
+		for i := range lines {
+			lines[i] += sb[i]
+		}
+	}
+
 	listContent := strings.Join(lines, "\n")
 
 	help := styles.MutedStyle.Render("↑↓ nav  enter select  space mark  d del  esc close")
