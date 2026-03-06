@@ -42,6 +42,7 @@ type FieldPickerModel struct {
 	width    int
 	height   int
 	contentW int    // pre-computed content width from all items
+	fixedVis int    // visible rows locked at open time
 	body     string // raw response body for "entire body" copy
 }
 
@@ -87,6 +88,7 @@ func NewFieldPicker(body string, width, height int) FieldPickerModel {
 	m.contentW = cw
 
 	m.applyFilter()
+	m.fixedVis = m.visibleRows()
 	return m
 }
 
@@ -138,12 +140,22 @@ func (m *FieldPickerModel) applyFilter() {
 }
 
 func (m FieldPickerModel) visibleRows() int {
-	// height minus: border(2) + title(1) + filter(1) + blank(1) + help(1) + blank(1)
-	rows := m.height - 7
-	if rows < 3 {
-		rows = 3
+	if m.fixedVis > 0 {
+		return m.fixedVis
 	}
-	return rows
+	// height minus: border(2) + title(1) + filter(1) + blank(1) + help(1) + blank(1)
+	maxRows := m.height - 7
+	if maxRows < 3 {
+		maxRows = 3
+	}
+	n := len(m.items)
+	if n < 1 {
+		n = 1
+	}
+	if n < maxRows {
+		return n
+	}
+	return maxRows
 }
 
 func (m FieldPickerModel) Update(msg tea.Msg) (FieldPickerModel, tea.Cmd) {
