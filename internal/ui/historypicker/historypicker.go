@@ -56,7 +56,7 @@ func New(entries []storage.HistoryEntry, width, height int) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Filter history..."
 	ti.Prompt = "/ "
-	ti.SetWidth(width - 6)
+	ti.SetWidth(width - 7)
 	ti.Focus()
 
 	m := Model{
@@ -87,7 +87,7 @@ func New(entries []storage.HistoryEntry, width, height int) Model {
 	}
 	m.innerW = cw
 
-	ti.SetWidth(cw - 2) // minus prompt "/ "
+	ti.SetWidth(cw - 3) // minus prompt "/ " (2) and cursor (1)
 
 	m.applyFilter()
 	m.fixedVis = m.visibleRows()
@@ -379,7 +379,7 @@ func (m Model) View() string {
 	}
 	title += styles.MutedStyle.Render(countInfo)
 
-	m.filter.SetWidth(innerW - 2)
+	m.filter.SetWidth(innerW - 3)
 	filterLine := m.filter.View()
 
 	vis := m.visibleRows()
