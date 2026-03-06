@@ -443,16 +443,15 @@ func (m Model) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(listContent)
 
+	b.WriteString("\n\n")
 	if m.confirm != confirmNone {
 		confirmStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#FBBF24")).
 			Bold(true)
-		b.WriteString("\n\n")
 		b.WriteString(confirmStyle.Render(m.confirmLabel))
+	} else {
+		b.WriteString(help)
 	}
-
-	b.WriteString("\n\n")
-	b.WriteString(help)
 
 	overlayStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
