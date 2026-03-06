@@ -100,30 +100,30 @@ func (m Model) renderContent() string {
 			"URL Bar",
 			[][2]string{
 				{"Ctrl+P", "Open method selector"},
-				{"Up/Down", "Open history"},
+				{"Up / Down", "Open history"},
 				{"Type URL", "Enter request URL"},
 			},
 		},
 		{
-			"Body Tab",
+			"Request Body",
 			[][2]string{
-				{"Ctrl+T", "Toggle JSON/YAML"},
+				{"Ctrl+T", "Toggle JSON / YAML"},
 			},
 		},
 		{
-			"Headers Tab",
+			"Request Headers",
 			[][2]string{
-				{"Up/Down", "Navigate rows"},
-				{"Left/Right", "Move cursor / switch column"},
+				{"Up / Down", "Navigate rows"},
+				{"Left / Right", "Move cursor / switch column"},
 				{"Enter", "New row"},
 				{"Ctrl+D", "Delete row"},
 			},
 		},
 		{
-			"Auth Tab",
+			"Request Auth",
 			[][2]string{
-				{"Up/Down", "Select auth type"},
-				{"Enter", "Open/confirm dropdown"},
+				{"Up / Down", "Select auth type"},
+				{"Enter", "Open / confirm dropdown"},
 				{"Esc", "Close dropdown"},
 				{"Ctrl+E", "Toggle token visibility"},
 			},
@@ -132,10 +132,10 @@ func (m Model) renderContent() string {
 			"History (Alt+H / ↑↓ in URL bar)",
 			[][2]string{
 				{"/ (type)", "Filter entries"},
-				{"Up/Down", "Navigate"},
+				{"Up / Down", "Navigate"},
 				{"Enter", "Load entry"},
 				{"Space", "Toggle select"},
-				{"d", "Delete selected/single"},
+				{"d", "Delete selected / single"},
 				{"D", "Delete older"},
 				{"Ctrl+D", "Clear all"},
 				{"Ctrl+X", "Remove duplicates"},
@@ -143,15 +143,21 @@ func (m Model) renderContent() string {
 			},
 		},
 		{
-			"Response",
+			"Response Body",
 			[][2]string{
-				{"Tab", "Switch Body/Headers"},
-				{"Up/Down", "Scroll response"},
-				{"PgUp/PgDn", "Page scroll"},
-				{"Ctrl+T", "Toggle JSON/YAML view"},
-				{"Ctrl+W", "Toggle wrap/scroll"},
-				{"Left/Right", "Horizontal scroll"},
+				{"Up / Down", "Scroll"},
+				{"Ctrl+T", "Toggle JSON / YAML view"},
+				{"Ctrl+W", "Toggle wrap / scroll"},
+				{"Left / Right", "Horizontal scroll"},
 				{"y", "Copy field picker"},
+			},
+		},
+		{
+			"Response Headers",
+			[][2]string{
+				{"Up / Down", "Scroll"},
+				{"Ctrl+W", "Toggle wrap / scroll"},
+				{"Left / Right", "Horizontal scroll"},
 			},
 		},
 	}
