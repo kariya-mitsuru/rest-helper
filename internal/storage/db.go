@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -35,7 +34,7 @@ func Init() error {
 		return fmt.Errorf("setting WAL mode: %w", err)
 	}
 
-	return migrate()
+	return createTables()
 }
 
 func Close() error {
@@ -56,15 +55,18 @@ func dataPath() (string, error) {
 	return filepath.Join(home, ".local", "share", "rest-helper"), nil
 }
 
-func migrate() error {
-	migrations := []string{
+func createTables() error {
+	tables := []string{
 		`CREATE TABLE IF NOT EXISTS history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			method TEXT NOT NULL,
 			url TEXT NOT NULL,
 			request_headers TEXT DEFAULT '{}',
 			request_body TEXT DEFAULT '',
+			body_format TEXT DEFAULT 'JSON',
 			status_code INTEGER DEFAULT 0,
+			response_proto TEXT DEFAULT '',
+			response_status TEXT DEFAULT '',
 			response_headers TEXT DEFAULT '{}',
 			response_body TEXT DEFAULT '',
 			response_time_ms INTEGER DEFAULT 0,
@@ -73,23 +75,15 @@ func migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_history_created_at ON history(created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_history_url ON history(url)`,
-		// Migration: add body_format column for existing DBs
-		`ALTER TABLE history ADD COLUMN body_format TEXT DEFAULT 'JSON'`,
-		// Migration: add proto and status columns
-		`ALTER TABLE history ADD COLUMN response_proto TEXT DEFAULT ''`,
-		`ALTER TABLE history ADD COLUMN response_status TEXT DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS settings (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		)`,
 	}
 
-	for _, m := range migrations {
-		if _, err := db.Exec(m); err != nil {
-			// Ignore "duplicate column" errors from ALTER TABLE migrations
-			if !strings.Contains(err.Error(), "duplicate column") {
-				return fmt.Errorf("migration failed: %w", err)
-			}
+	for _, ddl := range tables {
+		if _, err := db.Exec(ddl); err != nil {
+			return fmt.Errorf("create table failed: %w", err)
 		}
 	}
 

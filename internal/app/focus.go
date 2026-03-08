@@ -9,5 +9,4 @@ const (
 	FocusURLBar FocusPanel = iota
 	FocusRequest
 	FocusResponse
-	FocusSidebar
 )

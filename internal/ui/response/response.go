@@ -3,7 +3,6 @@
 package response
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -13,10 +12,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"gopkg.in/yaml.v3"
 
 	"rest-helper/internal/http"
 	"rest-helper/internal/ui/styles"
+	"rest-helper/internal/ui/widget"
 )
 
 type displayFormat int
@@ -24,24 +23,19 @@ type displayFormat int
 const (
 	formatJSON displayFormat = iota
 	formatYAML
+	formatRAW
 )
 
-type responseTab int
+type Tab int
 
 const (
-	TabBody responseTab = iota
+	TabBody Tab = iota
 	TabHeaders
 )
 
-type respTabInfo struct {
-	name string
-	tab  responseTab
-	key  string
-}
-
-var respTabsConfig = []respTabInfo{
-	{"Body", TabBody, "R"},
-	{"Headers", TabHeaders, "D"},
+var tabsConfig = []styles.TabDef{
+	{Name: "Body", Key: "R", Index: int(TabBody)},
+	{Name: "Headers", Key: "D", Index: int(TabHeaders)},
 }
 
 type Model struct {
@@ -53,14 +47,22 @@ type Model struct {
 	height          int
 	loading         bool
 	display         displayFormat
-	preferredFormat displayFormat // user's preferred format for JSON responses
-	wrapMode        bool          // true=wrap, false=horizontal scroll
-	xOffset         int           // horizontal scroll position
-	rawLines        []string      // pre-wrap content lines for horizontal scroll
-	maxLineWidth    int           // max visible width among rawLines
-	dragging        bool          // true while dragging the horizontal scrollbar
-	fieldPicker     *FieldPickerModel
-	activeTab       responseTab
+	preferredFormat displayFormat     // user's preferred format for JSON responses
+	wrapMode        bool              // true=wrap, false=horizontal scroll
+	xOffset         int               // horizontal scroll position
+	rawLines        []string          // pre-wrap content lines for horizontal scroll
+	maxLineWidth    int               // max visible width among rawLines
+	hDrag           widget.ScrollDrag // horizontal scrollbar drag state
+	vDrag           widget.ScrollDrag
+	fieldPicker     *widget.OverlayPicker[PathValue]
+	ctxMenu         *widget.ContextMenu
+	ctxLine         lineInfo   // info for the right-clicked line
+	lineInfos       []lineInfo // extracted key+value per raw line
+	bodyIsJSON      bool       // cached result of json.Valid on response body
+	activeTab       Tab
+	screenW         int // full terminal width (for overlay sizing)
+	screenH         int // full terminal height
+	hideTitle       bool
 }
 
 func New() Model {
@@ -95,9 +97,10 @@ func (m *Model) SetResponse(resp *http.Response) {
 	m.err = nil
 	m.xOffset = 0
 	m.activeTab = TabBody
+	m.bodyIsJSON = resp.Body != "" && json.Valid([]byte(resp.Body))
 	// Use preferred format if the body is JSON, otherwise fall back to JSON (raw)
 	m.display = formatJSON
-	if json.Valid([]byte(resp.Body)) {
+	if m.bodyIsJSON {
 		m.display = m.preferredFormat
 	}
 	m.refreshContent()
@@ -117,10 +120,7 @@ func (m *Model) SetError(err error) {
 }
 
 func (m *Model) isBodyJSON() bool {
-	if m.response == nil || m.response.Body == "" {
-		return false
-	}
-	return json.Valid([]byte(m.response.Body))
+	return m.bodyIsJSON
 }
 
 // refreshContent re-renders the response body with the current viewport width.
@@ -129,14 +129,19 @@ func (m *Model) refreshContent() {
 		return
 	}
 
-	// Get syntax-highlighted content WITHOUT wrapping
+	// Get content WITHOUT wrapping
 	var raw string
 	if m.activeTab == TabHeaders {
 		raw = m.formatHeaders()
+	} else if m.display == formatRAW {
+		raw = m.response.Body
+		if raw == "" {
+			raw = emptyResponseText
+		}
 	} else if m.display == formatYAML && m.isBodyJSON() {
-		raw = formatAsYAML(m.response.Body, 0)
+		raw = formatAsYAML(m.response.Body)
 	} else {
-		raw = formatBody(m.response.Body, 0)
+		raw = formatBody(m.response.Body)
 	}
 
 	m.rawLines = strings.Split(raw, "\n")
@@ -165,6 +170,7 @@ func (m *Model) refreshContent() {
 		m.applyXOffset()
 	}
 	m.viewport.GotoTop()
+	m.buildLineInfos()
 }
 
 func (m Model) contentWidth() int {
@@ -211,34 +217,52 @@ func (m *Model) applyXOffset() {
 	m.viewport.SetContent(b.String())
 }
 
-// ToggleFormat switches between JSON and YAML display for JSON responses.
+// ToggleFormat cycles display format: JSON → YAML → RAW → JSON.
+// For non-JSON responses, toggles between RAW and the current format.
 func (m *Model) ToggleFormat() {
-	if !m.isBodyJSON() {
-		return
-	}
-	if m.display == formatJSON {
-		m.display = formatYAML
+	if m.isBodyJSON() {
+		switch m.display {
+		case formatJSON:
+			m.display = formatYAML
+		case formatYAML:
+			m.display = formatRAW
+		default:
+			m.display = formatJSON
+		}
 	} else {
-		m.display = formatJSON
+		if m.display == formatRAW {
+			m.display = formatJSON
+		} else {
+			m.display = formatRAW
+		}
 	}
-	m.preferredFormat = m.display
+	if m.display != formatRAW {
+		m.preferredFormat = m.display
+	}
 	m.refreshContent()
 }
 
-// formatHeaders returns a colorized Key: Value display of response headers.
-func (m *Model) formatHeaders() string {
+// sortedHeaderKeys returns the response header keys in sorted order.
+func (m *Model) sortedHeaderKeys() []string {
 	if m.response == nil || len(m.response.Headers) == 0 {
-		return styles.MutedStyle.Render("(no headers)")
+		return nil
 	}
-
-	var b strings.Builder
-
 	keys := make([]string, 0, len(m.response.Headers))
 	for k := range m.response.Headers {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	return keys
+}
 
+// formatHeaders returns a colorized Key: Value display of response headers.
+func (m *Model) formatHeaders() string {
+	keys := m.sortedHeaderKeys()
+	if len(keys) == 0 {
+		return styles.MutedStyle.Render("(no headers)")
+	}
+
+	var b strings.Builder
 	first := true
 	for _, k := range keys {
 		for _, v := range m.response.Headers[k] {
@@ -255,79 +279,8 @@ func (m *Model) formatHeaders() string {
 	return b.String()
 }
 
-// renderTabs returns the tab bar row with Body/Headers tabs and optional format/wrap toggles.
-func (m Model) renderTabs() string {
-	var parts []string
-	for _, t := range respTabsConfig {
-		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
-		if t.tab == m.activeTab {
-			parts = append(parts, styles.ActiveTab.Render(label))
-		} else {
-			parts = append(parts, styles.InactiveTab.Render(label))
-		}
-	}
-
-	result := strings.Join(parts, "  ")
-
-	if m.response != nil {
-		if m.activeTab == TabBody && m.isBodyJSON() {
-			label := "JSON"
-			if m.display == formatYAML {
-				label = "YAML"
-			}
-			result += "  " + styles.ActiveTab.Render(label)
-		} else {
-			result += "  " + "    " // placeholder matching "JSON"/"YAML" width
-		}
-		if m.wrapMode {
-			result += "  " + styles.ActiveTab.Render(" Wrap ")
-		} else {
-			result += "  " + styles.ActiveTab.Render("Scroll")
-		}
-	}
-
-	return result
-}
-
-// tabPrefixWidth returns the visual width of tab labels (before format/wrap toggles).
-func (m Model) tabPrefixWidth() int {
-	w := 0
-	for i, t := range respTabsConfig {
-		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
-		w += lipgloss.Width(styles.InactiveTab.Render(label))
-		if i < len(respTabsConfig)-1 {
-			w += 2 // gap
-		}
-	}
-	return w
-}
-
-// ClickTabAt handles a mouse click on the tab row at the given column position.
-func (m *Model) ClickTabAt(col int) {
-	pos := 0
-	for _, t := range respTabsConfig {
-		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
-		w := lipgloss.Width(styles.InactiveTab.Render(label))
-		if col >= pos && col < pos+w {
-			if m.activeTab != t.tab {
-				m.activeTab = t.tab
-				m.xOffset = 0
-				m.refreshContent()
-			}
-			return
-		}
-		pos += w + 2
-	}
-}
-
-// TabAreaOffset returns the column offset where tabs begin within the content area.
-// Tabs are always on line 0 after "Response  ".
-func (m Model) TabAreaOffset() int {
-	return lipgloss.Width(m.renderTitle()) + 2
-}
-
 // SetTab sets the active response tab.
-func (m *Model) SetTab(tab responseTab) {
+func (m *Model) SetTab(tab Tab) {
 	if tab != m.activeTab {
 		m.activeTab = tab
 		m.xOffset = 0
@@ -335,70 +288,31 @@ func (m *Model) SetTab(tab responseTab) {
 	}
 }
 
-// CycleTab switches between Body and Headers tabs.
-func (m *Model) CycleTab() {
-	if m.activeTab == TabBody {
-		m.activeTab = TabHeaders
-	} else {
-		m.activeTab = TabBody
-	}
-	m.xOffset = 0
-	m.refreshContent()
-}
-
-// IsFormatClick checks if the given column (relative to tab area start)
-// is on the format toggle label.
-func (m Model) IsFormatClick(col int) bool {
-	if m.activeTab != TabBody || !m.isBodyJSON() || m.response == nil {
-		return false
-	}
-	start := m.tabPrefixWidth() + 2
-	formatW := lipgloss.Width(styles.ActiveTab.Render("JSON"))
-	return col >= start && col < start+formatW
-}
-
-// IsWrapClick checks if the given column (relative to tab area start)
-// is on the wrap/scroll toggle label.
-func (m Model) IsWrapClick(col int) bool {
-	if m.response == nil {
-		return false
-	}
-	formatW := lipgloss.Width(styles.ActiveTab.Render("JSON"))
-	start := m.tabPrefixWidth() + 2 + formatW + 2
-	wrapW := lipgloss.Width(styles.ActiveTab.Render("Scroll"))
-	return col >= start && col < start+wrapW
-}
-
 // FieldPickerVisible returns whether the field picker overlay is open.
 func (m Model) FieldPickerVisible() bool {
 	return m.fieldPicker != nil
 }
 
-// OpenFieldPicker opens the copy field picker for the current response.
+// OpenFieldPicker opens the field picker overlay for the current response body.
 func (m *Model) OpenFieldPicker() {
-	if m.response == nil || m.response.Body == "" {
-		return
-	}
-	fp := NewFieldPicker(m.response.Body, m.width, m.height)
-	m.fieldPicker = &fp
+	m.fieldPicker = NewFieldPicker(m.response.Body, m.screenW, m.screenH)
 }
 
 // UpdateFieldPicker forwards a message to the field picker.
+// The caller must check FieldPickerVisible() before calling this.
 func (m *Model) UpdateFieldPicker(msg tea.Msg) tea.Cmd {
-	if m.fieldPicker == nil {
-		return nil
-	}
-	fp, cmd := m.fieldPicker.Update(msg)
-	m.fieldPicker = &fp
-	return cmd
+	return m.fieldPicker.Update(msg)
 }
 
-// ViewFieldPicker renders the field picker overlay.
-func (m Model) ViewFieldPicker() string {
-	if m.fieldPicker == nil {
-		return ""
-	}
-	return m.fieldPicker.View()
+// BuildFieldPickerLayer returns the field picker as a lipgloss Layer.
+// The caller must check FieldPickerVisible() before calling this.
+func (m Model) BuildFieldPickerLayer() *lipgloss.Layer {
+	return m.fieldPicker.BuildLayer()
+}
+
+// GetFieldPicker returns the field picker, or nil if not visible.
+func (m *Model) GetFieldPicker() *widget.OverlayPicker[PathValue] {
+	return m.fieldPicker
 }
 
 // CloseFieldPicker closes the field picker.
@@ -422,12 +336,14 @@ func (m *Model) SetPreferredFormat(f string) {
 	}
 }
 
-// GetPreferredFormat returns the current preferred format as "JSON" or "YAML".
+// GetPreferredFormat returns the current preferred format as "JSON", "YAML", or "RAW".
 func (m Model) GetPreferredFormat() string {
-	if m.preferredFormat == formatYAML {
+	switch m.preferredFormat {
+	case formatYAML:
 		return "YAML"
+	default:
+		return "JSON"
 	}
-	return "JSON"
 }
 
 // SetWrapMode sets the wrap mode.
@@ -472,11 +388,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "tab":
-			m.CycleTab()
-			return m, nil
 		case "ctrl+t":
-			if m.activeTab == TabBody {
+			if m.activeTab == TabBody && m.response != nil && m.response.Body != "" {
 				m.ToggleFormat()
 				return m, nil
 			}
@@ -487,6 +400,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		case "ctrl+w":
 			m.ToggleWrap()
+			return m, nil
+		case "home", "ctrl+home":
+			m.viewport.GotoTop()
+			return m, nil
+		case "end", "ctrl+end":
+			m.viewport.GotoBottom()
 			return m, nil
 		case "left":
 			if !m.wrapMode && m.xOffset > 0 {
@@ -508,82 +427,111 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) View() string {
-	tabs := m.renderTabs()
+func (m Model) ViewLayer() *lipgloss.Layer {
+	borderStyle := styles.BorderStyleForFocus(m.focused)
 
-	borderStyle := styles.NormalBorder
-	if m.focused {
-		borderStyle = styles.FocusedBorder
-	}
+	title := m.renderTitle()
+	meta := m.renderMeta()
+	hasMeta := meta != ""
 
-	// Line 0: title + tabs, Line 1: status/meta (if present)
-	line0 := m.renderTitle() + "  " + tabs
-
-	parts := []string{line0}
-	if meta := m.renderMeta(); meta != "" {
+	// Reserve first row for tab buttons (rendered as child layers)
+	parts := []string{""}
+	if hasMeta {
 		parts = append(parts, meta)
 	}
 	parts = append(parts, m.viewport.View())
 
-	// Show horizontal scrollbar in scroll mode when content is wider than viewport
-	if !m.wrapMode && m.maxLineWidth > m.contentWidth() {
-		parts = append(parts, m.renderHScrollBar())
+	if m.HasScrollBar() {
+		// Reserve a line for the scrollbar (rendered as a child layer below)
+		parts = append(parts, "")
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	full := borderStyle.Width(m.width).Height(m.height).Render(content)
 
-	return borderStyle.
-		Width(m.width).
-		Height(m.height).
-		Render(content)
+	// Title on top border (hidden in fullscreen mode; app renders tabs instead)
+	var children []*lipgloss.Layer
+	if !m.hideTitle {
+		children = append(children, lipgloss.NewLayer(title).X(2).Y(0).Z(1))
+	}
+
+	// Tab buttons on first content row (Y=1, inside border)
+	tabLayers, x := styles.RenderTabLayers(tabsConfig, int(m.activeTab), "resp-tab-", 2, 1)
+	children = append(children, tabLayers...)
+
+	if m.response != nil {
+		// Format toggle (shown for JSON bodies, or when RAW is active)
+		if m.activeTab == TabBody && (m.isBodyJSON() || m.display == formatRAW) {
+			label := "JSON [Ctrl+T]"
+			switch m.display {
+			case formatYAML:
+				label = "YAML [Ctrl+T]"
+			case formatRAW:
+				label = "RAW  [Ctrl+T]"
+			}
+			rendered := styles.ActiveTab.Render(label)
+			children = append(children, lipgloss.NewLayer(rendered).
+				ID("resp-format-toggle").
+				X(x).Y(1).Z(1))
+			x += lipgloss.Width(rendered) + 2
+		}
+
+		// Wrap/Scroll toggle
+		wrapRendered := styles.ActiveTab.Render(styles.WrapToggleLabel(m.wrapMode))
+		children = append(children, lipgloss.NewLayer(wrapRendered).
+			ID("resp-wrap-toggle").
+			X(x).Y(1).Z(1))
+		x += lipgloss.Width(wrapRendered) + 2
+
+		// Copy button (only for body tab with content)
+		if m.activeTab == TabBody && m.response.Body != "" {
+			copyRendered := styles.InactiveTab.Render("Copy [y]")
+			children = append(children, lipgloss.NewLayer(copyRendered).
+				ID("resp-copy-btn").
+				X(x).Y(1).Z(1))
+		}
+
+		// Horizontal scrollbar
+		if m.HasScrollBar() {
+			sb := m.renderHScrollBar()
+			sbY := m.ScrollBarRelY()
+			children = append(children, lipgloss.NewLayer(sb).
+				ID("resp-scrollbar").
+				X(2).Y(sbY).Z(1))
+		}
+
+		// Vertical scrollbar
+		total := m.viewport.TotalLineCount()
+		vis := m.viewport.Height()
+		sbY := 2 // border(1) + tabs(1)
+		if hasMeta {
+			sbY = 3
+		}
+		if sbLayer := widget.ScrollbarLayer("resp-vscrollbar", total, vis, m.viewport.YOffset(), m.width, sbY, 1); sbLayer != nil {
+			children = append(children, sbLayer)
+		}
+	}
+
+	return lipgloss.NewLayer(full, children...).ID("response")
 }
 
 // renderHScrollBar renders a horizontal scrollbar indicating xOffset position.
 func (m Model) renderHScrollBar() string {
-	trackW := m.contentWidth()
-	if trackW <= 0 {
-		return ""
-	}
-
-	totalW := m.maxLineWidth
-	viewW := m.contentWidth()
-
-	// Thumb size: proportional to visible fraction
-	thumbW := trackW * viewW / totalW
-	if thumbW < 1 {
-		thumbW = 1
-	}
-	if thumbW > trackW {
-		thumbW = trackW
-	}
-
-	// Thumb position
-	maxOff := m.maxXOffset()
-	thumbPos := 0
-	if maxOff > 0 {
-		thumbPos = (trackW - thumbW) * m.xOffset / maxOff
-	}
-	if thumbPos+thumbW > trackW {
-		thumbPos = trackW - thumbW
-	}
-
-	trackStyle := lipgloss.NewStyle().Foreground(styles.BorderColor)
-	thumbStyle := lipgloss.NewStyle().Foreground(styles.MutedColor)
-
-	var b strings.Builder
-	for i := 0; i < trackW; i++ {
-		if i >= thumbPos && i < thumbPos+thumbW {
-			b.WriteString(thumbStyle.Render("━"))
-		} else {
-			b.WriteString(trackStyle.Render("─"))
-		}
-	}
-	return b.String()
+	return styles.RenderHScrollbar(m.maxLineWidth, m.contentWidth(), m.xOffset)
 }
 
 // HasScrollBar returns true when the horizontal scrollbar is visible.
 func (m Model) HasScrollBar() bool {
 	return !m.wrapMode && m.maxLineWidth > m.contentWidth()
+}
+
+// headerRowCount returns the number of rows above the viewport content.
+// border(1) + tabs(1) + meta(1) = 3 when meta is present, 2 otherwise.
+func (m Model) headerRowCount() int {
+	if m.hasMeta() {
+		return 3
+	}
+	return 2
 }
 
 // ScrollBarRelY returns the scrollbar's row relative to the response panel top.
@@ -592,50 +540,89 @@ func (m Model) ScrollBarRelY() int {
 	if !m.HasScrollBar() {
 		return -1
 	}
-	headerRows := 3 // border(1) + title/tabs(1) + meta(1)
-	if lipgloss.Width(m.renderMeta()) == 0 {
-		headerRows = 2 // border(1) + title/tabs(1)
-	}
-	return headerRows + m.viewport.Height()
+	return m.headerRowCount() + m.viewport.Height()
 }
 
-// HandleScrollBarMouse maps a click/drag column position on the scrollbar track to xOffset.
-func (m *Model) HandleScrollBarMouse(col int) {
+// HandleHScrollClick handles a click on the horizontal scrollbar.
+func (m *Model) HandleHScrollClick(localCol, baseX int) {
 	trackW := m.contentWidth()
 	if trackW <= 0 {
 		return
 	}
-	maxOff := m.maxXOffset()
-	// Map col to xOffset: col 0 → offset 0, col trackW-1 → offset maxOff
-	newOffset := maxOff * col / trackW
-	if newOffset < 0 {
-		newOffset = 0
+	if delta := m.hDrag.HandleClick(localCol, baseX, m.maxLineWidth, trackW, m.xOffset); delta != 0 {
+		m.xOffset += delta
+		m.clampXOffset()
+		m.applyXOffset()
 	}
-	if newOffset > maxOff {
-		newOffset = maxOff
+}
+
+// handleHScrollDrag processes mouse motion during horizontal scrollbar drag.
+func (m *Model) handleHScrollDrag(mouseX int) {
+	trackW := m.contentWidth()
+	if trackW <= 0 {
+		return
 	}
-	m.xOffset = newOffset
+	m.xOffset = m.hDrag.DragOffset(mouseX, trackW, m.maxLineWidth)
 	m.applyXOffset()
 }
 
-// StartDrag marks the scrollbar as being dragged.
-func (m *Model) StartDrag() {
-	m.dragging = true
+// handleVScrollDrag processes mouse motion during vertical scrollbar drag.
+func (m *Model) handleVScrollDrag(mouseY int) {
+	total := m.viewport.TotalLineCount()
+	vis := m.viewport.Height()
+	if vis <= 1 || total <= vis {
+		return
+	}
+	m.viewport.SetYOffset(m.vDrag.DragOffset(mouseY, vis, total))
 }
 
-// StopDrag ends a scrollbar drag.
-func (m *Model) StopDrag() {
-	m.dragging = false
-}
-
-// IsDragging returns whether the scrollbar is currently being dragged.
+// IsDragging reports whether any scrollbar drag is active.
 func (m Model) IsDragging() bool {
-	return m.dragging
+	return m.hDrag.Active() || m.vDrag.Active()
+}
+
+// StopDrag ends any active scrollbar drag. Returns true if a drag was stopped.
+func (m *Model) StopDrag() bool {
+	if m.hDrag.Active() {
+		m.hDrag.Stop()
+		return true
+	}
+	if m.vDrag.Active() {
+		m.vDrag.Stop()
+		return true
+	}
+	return false
+}
+
+// HandleDragMotion processes mouse motion for any active scrollbar drag.
+// Returns true if a drag was handled.
+func (m *Model) HandleDragMotion(x, y int) bool {
+	if m.hDrag.Active() {
+		m.handleHScrollDrag(x)
+		return true
+	}
+	if m.vDrag.Active() {
+		m.handleVScrollDrag(y)
+		return true
+	}
+	return false
+}
+
+// HandleVScrollClick handles a click on the vertical scrollbar.
+func (m *Model) HandleVScrollClick(localY, baseY int) {
+	total := m.viewport.TotalLineCount()
+	vis := m.viewport.Height()
+	if vis <= 1 || total <= vis {
+		return
+	}
+	if newOff, changed := m.vDrag.HandleClickAndClamp(localY, baseY, total, vis, m.viewport.YOffset()); changed {
+		m.viewport.SetYOffset(newOff)
+	}
 }
 
 // renderTitle returns the fixed "Response" prefix.
 func (m Model) renderTitle() string {
-	return lipgloss.NewStyle().Bold(true).Render("Response")
+	return styles.BoldStyle.Render("Response")
 }
 
 // renderMeta returns the status line with duration and size, or loading/error indicator.
@@ -662,11 +649,20 @@ func (m Model) renderMeta() string {
 	)
 }
 
+func (m *Model) SetHideTitle(hide bool) {
+	m.hideTitle = hide
+}
+
+func (m *Model) SetScreenSize(w, h int) {
+	m.screenW = w
+	m.screenH = h
+}
+
 func (m *Model) SetSize(w, h int) {
 	m.width = w
 	m.height = h
-	m.viewport.SetWidth(w - 4)
-	// base viewport height: content area (h-2) minus header (1) minus tabs (1)
+	m.viewport.SetWidth(w - 4) // border(2) + padding(1) + right margin(1)
+	// base viewport height: content area (h-2) minus tabs(1) minus meta(1)
 	vpH := h - 4
 	if vpH < 1 {
 		vpH = 1
@@ -676,211 +672,29 @@ func (m *Model) SetSize(w, h int) {
 	m.refreshContent()
 
 	if m.fieldPicker != nil {
-		m.fieldPicker.width = w
-		m.fieldPicker.height = h
-		m.fieldPicker.filter.SetWidth(w - 6)
+		m.fieldPicker.SetSize(m.screenW, m.screenH)
 	}
 }
 
 // updateViewportHeight adjusts viewport height to reserve space for the header rows
 // and horizontal scrollbar when needed.
+// hasMeta returns true when a meta line (status/loading/error) should be displayed.
+func (m Model) hasMeta() bool {
+	return m.loading || m.err != nil || m.response != nil
+}
+
 func (m *Model) updateViewportHeight() {
-	// border(2) + title/tabs(1) + meta(1) = 4 lines reserved
+	// border(2) + tabs(1) + meta(1) = 4 lines reserved (title is on the border)
 	// When no meta, only 3 lines reserved
-	metaW := lipgloss.Width(m.renderMeta())
 	base := m.height - 4
-	if metaW == 0 {
+	if !m.hasMeta() {
 		base = m.height - 3
 	}
-	if !m.wrapMode && m.maxLineWidth > m.contentWidth() {
+	if m.HasScrollBar() {
 		base-- // reserve 1 line for scrollbar
 	}
 	if base < 1 {
 		base = 1
 	}
 	m.viewport.SetHeight(base)
-}
-
-// Shared color palette for syntax highlighting.
-var (
-	hlKeyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#06B6D4"))
-	hlStrStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#10B981"))
-	hlNumStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F59E0B"))
-	hlBoolStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#8B5CF6"))
-	hlNullStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280"))
-	hlPunctStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#9CA3AF"))
-)
-
-// --- Formatting ---
-
-func formatBody(body string, width int) string {
-	if body == "" {
-		return styles.MutedStyle.Render("(empty response)")
-	}
-
-	// Try to pretty-print JSON
-	var buf bytes.Buffer
-	if err := json.Indent(&buf, []byte(body), "", "  "); err == nil {
-		return syntaxHighlight(buf.String(), width)
-	}
-
-	// Non-JSON: ANSI-aware wrap
-	if width > 0 {
-		return ansi.Hardwrap(body, width, false)
-	}
-	return body
-}
-
-func formatAsYAML(body string, width int) string {
-	var data any
-	if err := json.Unmarshal([]byte(body), &data); err != nil {
-		return formatBody(body, width)
-	}
-
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(data); err != nil {
-		return formatBody(body, width)
-	}
-
-	return syntaxHighlightYAML(buf.String(), width)
-}
-
-func syntaxHighlightYAML(yamlStr string, width int) string {
-	var result strings.Builder
-
-	lines := strings.Split(strings.TrimRight(yamlStr, "\n"), "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		indent := line[:len(line)-len(trimmed)]
-		result.WriteString(indent)
-
-		if strings.HasPrefix(trimmed, "- ") {
-			// List item
-			result.WriteString(hlPunctStyle.Render("- "))
-			rest := trimmed[2:]
-			if strings.Contains(rest, ": ") {
-				result.WriteString(colorizeYAMLKeyValue(rest, hlKeyStyle, hlStrStyle, hlNumStyle, hlBoolStyle, hlNullStyle, hlPunctStyle))
-			} else {
-				result.WriteString(colorizeYAMLValue(rest, hlStrStyle, hlNumStyle, hlBoolStyle, hlNullStyle))
-			}
-		} else if strings.Contains(trimmed, ": ") {
-			result.WriteString(colorizeYAMLKeyValue(trimmed, hlKeyStyle, hlStrStyle, hlNumStyle, hlBoolStyle, hlNullStyle, hlPunctStyle))
-		} else if strings.HasSuffix(trimmed, ":") {
-			// Key with no value (nested object/array follows)
-			result.WriteString(hlKeyStyle.Render(strings.TrimSuffix(trimmed, ":")))
-			result.WriteString(hlPunctStyle.Render(":"))
-		} else {
-			result.WriteString(colorizeYAMLValue(trimmed, hlStrStyle, hlNumStyle, hlBoolStyle, hlNullStyle))
-		}
-
-		if i < len(lines)-1 {
-			result.WriteString("\n")
-		}
-	}
-
-	if width > 0 {
-		return ansi.Hardwrap(result.String(), width, false)
-	}
-	return result.String()
-}
-
-func colorizeYAMLKeyValue(s string, keyStyle, strStyle, numStyle, boolStyle, nullStyle, punctStyle lipgloss.Style) string {
-	parts := strings.SplitN(s, ": ", 2)
-	key := parts[0]
-	val := ""
-	if len(parts) > 1 {
-		val = parts[1]
-	}
-	return keyStyle.Render(key) + punctStyle.Render(": ") + colorizeYAMLValue(val, strStyle, numStyle, boolStyle, nullStyle)
-}
-
-func colorizeYAMLValue(val string, strStyle, numStyle, boolStyle, nullStyle lipgloss.Style) string {
-	switch {
-	case val == "null" || val == "~":
-		return nullStyle.Render(val)
-	case val == "true" || val == "false":
-		return boolStyle.Render(val)
-	case len(val) > 0 && (val[0] >= '0' && val[0] <= '9' || val[0] == '-' || val[0] == '.'):
-		return numStyle.Render(val)
-	case strings.HasPrefix(val, "'") || strings.HasPrefix(val, "\""):
-		return strStyle.Render(val)
-	case val == "[]" || val == "{}":
-		return nullStyle.Render(val)
-	default:
-		return strStyle.Render(val)
-	}
-}
-
-func syntaxHighlight(jsonStr string, width int) string {
-	var result strings.Builder
-
-	// Colorize on original (unwrapped) lines
-	lines := strings.Split(jsonStr, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		indent := line[:len(line)-len(trimmed)]
-		result.WriteString(indent)
-
-		if strings.Contains(trimmed, ":") {
-			parts := strings.SplitN(trimmed, ":", 2)
-			key := strings.TrimSpace(parts[0])
-			val := ""
-			if len(parts) > 1 {
-				val = strings.TrimSpace(parts[1])
-			}
-			result.WriteString(hlKeyStyle.Render(key))
-			result.WriteString(hlPunctStyle.Render(": "))
-			result.WriteString(colorizeValue(val, hlStrStyle, hlNumStyle, hlBoolStyle, hlNullStyle, hlPunctStyle))
-		} else {
-			result.WriteString(colorizeValue(trimmed, hlStrStyle, hlNumStyle, hlBoolStyle, hlNullStyle, hlPunctStyle))
-		}
-
-		if i < len(lines)-1 {
-			result.WriteString("\n")
-		}
-	}
-
-	// ANSI-aware wrap preserves color across broken lines
-	// Wrap (not Wordwrap) also force-breaks lines with no spaces
-	if width > 0 {
-		return ansi.Hardwrap(result.String(), width, false)
-	}
-	return result.String()
-}
-
-func colorizeValue(val string, strStyle, numStyle, boolStyle, nullStyle, punctStyle lipgloss.Style) string {
-	cleaned := strings.TrimSuffix(val, ",")
-	trailing := ""
-	if strings.HasSuffix(val, ",") {
-		trailing = punctStyle.Render(",")
-	}
-
-	switch {
-	case cleaned == "{" || cleaned == "}" || cleaned == "[" || cleaned == "]" ||
-		cleaned == "{}" || cleaned == "[]":
-		return punctStyle.Render(cleaned) + trailing
-	case cleaned == "null":
-		return nullStyle.Render(cleaned) + trailing
-	case cleaned == "true" || cleaned == "false":
-		return boolStyle.Render(cleaned) + trailing
-	case strings.HasPrefix(cleaned, "\""):
-		return strStyle.Render(cleaned) + trailing
-	case len(cleaned) > 0 && (cleaned[0] >= '0' && cleaned[0] <= '9' || cleaned[0] == '-'):
-		return numStyle.Render(cleaned) + trailing
-	default:
-		return val
-	}
-}
-
-func formatSize(bytes int64) string {
-	switch {
-	case bytes >= 1024*1024:
-		return fmt.Sprintf("%.1fMB", float64(bytes)/(1024*1024))
-	case bytes >= 1024:
-		return fmt.Sprintf("%.1fKB", float64(bytes)/1024)
-	default:
-		return fmt.Sprintf("%dB", bytes)
-	}
 }

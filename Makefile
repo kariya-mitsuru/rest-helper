@@ -6,10 +6,24 @@ BINARY  := rest-helper
 
 .DEFAULT_GOAL := help
 
-.PHONY: build clean release help
+.PHONY: build clean release fmt lint help
 
 build:          ## Build the binary
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
+
+fmt:            ## Run go fmt, goimports, and golangci-lint --fix on all Go files
+	go fmt ./...
+	find . -name '*.go' -exec goimports -w {} +
+	golangci-lint run --fix ./...
+
+lint:           ## Check formatting and run linter (no modifications)
+	@STATUS=0; \
+	FMT=$$(gofmt -l .); \
+	if [ -n "$$FMT" ]; then printf "gofmt:\n%s\n" "$$FMT"; STATUS=1; fi; \
+	IMP=$$(find . -name '*.go' -exec goimports -l {} +); \
+	if [ -n "$$IMP" ]; then printf "goimports:\n%s\n" "$$IMP"; STATUS=1; fi; \
+	golangci-lint run ./... || STATUS=1; \
+	exit $$STATUS
 
 clean:          ## Remove the binary
 	rm -f $(BINARY)

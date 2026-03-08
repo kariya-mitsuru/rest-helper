@@ -37,8 +37,8 @@ func NewHeaders() HeadersModel {
 
 // columnWidths calculates key and value column widths from the panel width.
 func columnWidths(w int) (keyW, valW int) {
-	// content width: panel width - border(2) - prefix(2) - margin(1)
-	contentW := w - 5
+	// content width: panel width - border(2) - padding(1) - prefix(2) - margin(1)
+	contentW := w - 6
 	if contentW < 30 {
 		contentW = 30
 	}
@@ -50,16 +50,17 @@ func columnWidths(w int) (keyW, valW int) {
 	return
 }
 
-func (m *HeadersModel) addEmptyPair() {
-	ki := textinput.New()
-	ki.Placeholder = "Header name"
-	ki.CharLimit = 256
-	ki.Prompt = ""
+func newHeaderInput(placeholder string, charLimit int) textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = placeholder
+	ti.CharLimit = charLimit
+	ti.Prompt = ""
+	return ti
+}
 
-	vi := textinput.New()
-	vi.Placeholder = "Value"
-	vi.CharLimit = 1024
-	vi.Prompt = ""
+func (m *HeadersModel) addEmptyPair() {
+	ki := newHeaderInput("Header name", 256)
+	vi := newHeaderInput("Value", 1024)
 
 	keyW, valW := columnWidths(m.width)
 	// -1 so textinput scrolls before cursor overflows the display column
@@ -84,21 +85,15 @@ func (m HeadersModel) Headers() map[string]string {
 func (m *HeadersModel) SetHeaders(headers map[string]string) {
 	m.pairs = nil
 	for k, v := range headers {
-		ki := textinput.New()
-		ki.Placeholder = "Header name"
-		ki.CharLimit = 256
-		ki.Prompt = ""
+		ki := newHeaderInput("Header name", 256)
 		ki.SetValue(k)
-
-		vi := textinput.New()
-		vi.Placeholder = "Value"
-		vi.CharLimit = 1024
-		vi.Prompt = ""
+		vi := newHeaderInput("Value", 1024)
 		vi.SetValue(v)
-
 		m.pairs = append(m.pairs, headerPair{key: ki, value: vi})
 	}
-	m.addEmptyPair()
+	if len(m.pairs) == 0 {
+		m.addEmptyPair()
+	}
 	// Apply widths to all pairs
 	if m.width > 0 {
 		m.SetSize(m.width, m.height)
@@ -131,6 +126,10 @@ func (m *HeadersModel) Focus() {
 
 func (m *HeadersModel) Blur() {
 	m.focused = false
+	m.blurAllInputs()
+}
+
+func (m *HeadersModel) blurAllInputs() {
 	for i := range m.pairs {
 		m.pairs[i].key.Blur()
 		m.pairs[i].value.Blur()
@@ -138,10 +137,7 @@ func (m *HeadersModel) Blur() {
 }
 
 func (m *HeadersModel) updateInputFocus() {
-	for i := range m.pairs {
-		m.pairs[i].key.Blur()
-		m.pairs[i].value.Blur()
-	}
+	m.blurAllInputs()
 	if m.cursor < len(m.pairs) {
 		if m.colFocus == 0 {
 			m.pairs[m.cursor].key.Focus()
@@ -221,12 +217,26 @@ func (m HeadersModel) Update(msg tea.Msg) (HeadersModel, tea.Cmd) {
 					return m, nil
 				}
 			}
+		case "ctrl+home":
+			m.cursor = 0
+			m.updateInputFocus()
+			return m, nil
+		case "ctrl+end":
+			m.cursor = len(m.pairs) - 1
+			m.updateInputFocus()
+			return m, nil
 		case "ctrl+d":
 			if len(m.pairs) > 1 {
 				m.pairs = append(m.pairs[:m.cursor], m.pairs[m.cursor+1:]...)
 				if m.cursor >= len(m.pairs) {
 					m.cursor = len(m.pairs) - 1
 				}
+				m.updateInputFocus()
+			} else {
+				// Single remaining row: clear its content instead of deleting
+				m.pairs[0].key.SetValue("")
+				m.pairs[0].value.SetValue("")
+				m.colFocus = 0
 				m.updateInputFocus()
 			}
 			return m, nil
@@ -257,12 +267,6 @@ func (m HeadersModel) Update(msg tea.Msg) (HeadersModel, tea.Cmd) {
 		}
 	}
 
-	// Auto-add empty row if last row has content
-	last := m.pairs[len(m.pairs)-1]
-	if last.key.Value() != "" || last.value.Value() != "" {
-		m.addEmptyPair()
-	}
-
 	return m, cmd
 }
 
@@ -291,7 +295,8 @@ func (m HeadersModel) View() string {
 		}
 		keyView := fixedWidth(p.key.View(), keyColW)
 		valView := fixedWidth(p.value.View(), valColW)
-		b.WriteString(fmt.Sprintf("%s%s  %s", prefix, keyView, valView))
+		line := fmt.Sprintf("%s%s  %s", prefix, keyView, valView)
+		b.WriteString(line)
 		b.WriteString("\n")
 	}
 
@@ -300,7 +305,7 @@ func (m HeadersModel) View() string {
 		for i := end - m.scrollOffset; i < visible; i++ {
 			b.WriteString("\n")
 		}
-		help := "  enter: new row | ctrl+d: delete"
+		help := "  enter: next/new row | ctrl+d: delete"
 		if m.scrollOffset > 0 || end < len(m.pairs) {
 			help += fmt.Sprintf(" | %d/%d", m.cursor+1, len(m.pairs))
 		}
