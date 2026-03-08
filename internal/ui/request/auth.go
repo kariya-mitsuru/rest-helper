@@ -3,7 +3,6 @@
 package request
 
 import (
-	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -11,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"rest-helper/internal/ui/styles"
+	"rest-helper/internal/ui/widget"
 )
 
 var authTypes = []string{"None", "Bearer", "Basic", "Custom"}
@@ -20,8 +20,7 @@ type AuthModel struct {
 	tokenInput textinput.Model
 	focused    bool
 	width      int
-	selectOpen bool
-	selectIdx  int
+	dropdown   widget.Dropdown
 }
 
 func NewAuth() AuthModel {
@@ -68,8 +67,8 @@ func (m *AuthModel) SetToken(tokenType, token string) {
 
 func (m *AuthModel) SetWidth(w int) {
 	m.width = w
-	// content width: panel width - border(2) - indent(2)
-	tokenW := w - 4 - 2
+	// content width: panel width - border(2) - padding(1) - indent(2)
+	tokenW := w - 5 - 2
 	if tokenW < 20 {
 		tokenW = 20
 	}
@@ -78,79 +77,50 @@ func (m *AuthModel) SetWidth(w int) {
 
 // SelectOpen returns true when the auth type dropdown is visible.
 func (m AuthModel) SelectOpen() bool {
-	return m.selectOpen
+	return m.dropdown.IsOpen()
 }
 
 // ToggleSelect opens or closes the auth type dropdown.
 func (m *AuthModel) ToggleSelect() {
-	if m.selectOpen {
-		m.selectOpen = false
-	} else {
-		m.selectOpen = true
-		m.selectIdx = m.typeIdx
-	}
+	m.dropdown.Toggle(m.typeIdx)
 }
 
 // DropdownView returns the rendered dropdown overlay.
 func (m AuthModel) DropdownView() string {
-	var b strings.Builder
-	for i, t := range authTypes {
+	return m.dropdown.Render(authTypes, func(item string, _ int, highlighted bool) lipgloss.Style {
 		style := lipgloss.NewStyle().Foreground(styles.TextColor).Width(12).Padding(0, 1)
-		if i == m.selectIdx {
+		if highlighted {
 			style = style.Reverse(true)
 		}
-		b.WriteString(style.Render(t))
-		if i < len(authTypes)-1 {
-			b.WriteString("\n")
-		}
-	}
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(styles.PrimaryColor).
-		Padding(0, 1).
-		Render(b.String())
+		return style
+	})
 }
 
 // ClickDropdown handles a mouse click on the dropdown overlay.
 // row is relative to the dropdown top, col is relative to the dropdown left.
 // Returns true if an item was selected.
 func (m *AuthModel) ClickDropdown(row, col int) bool {
-	// Dropdown width: border(1) + padding(1) + content(12) + padding(1) + border(1) = 16
 	const dropdownW = 16
-	if col < 0 || col >= dropdownW {
-		return false
+	idx, ok := m.dropdown.HandleClick(row, col, len(authTypes), dropdownW)
+	if ok {
+		m.typeIdx = idx
+		m.updateTokenInputFocus()
 	}
-	// row 0 = top border, row 1..len(authTypes) = items, after = bottom border
-	idx := row - 1
-	if idx < 0 || idx >= len(authTypes) {
-		return false
-	}
-	m.typeIdx = idx
-	m.selectOpen = false
-	if m.typeIdx > 0 {
-		m.tokenInput.Focus()
-	} else {
-		m.tokenInput.Blur()
-	}
-	return true
-}
-
-// ClickType selects the auth type at the given row (0-based from the first item).
-func (m *AuthModel) ClickType(idx int) {
-	if idx < 0 || idx >= len(authTypes) {
-		return
-	}
-	m.typeIdx = idx
-	if m.typeIdx > 0 {
-		m.tokenInput.Focus()
-	} else {
-		m.tokenInput.Blur()
-	}
+	return ok
 }
 
 // HasTokenField returns true when a token type (non-None) is selected.
 func (m AuthModel) HasTokenField() bool {
 	return m.typeIdx > 0
+}
+
+// updateTokenInputFocus focuses or blurs the token input based on typeIdx.
+func (m *AuthModel) updateTokenInputFocus() {
+	if m.typeIdx > 0 {
+		m.tokenInput.Focus()
+	} else {
+		m.tokenInput.Blur()
+	}
 }
 
 // ToggleTokenVisibility switches the token between password and plain text.
@@ -172,7 +142,7 @@ func (m *AuthModel) Focus() {
 func (m *AuthModel) Blur() {
 	m.focused = false
 	m.tokenInput.Blur()
-	m.selectOpen = false
+	m.dropdown.Close()
 }
 
 func (m AuthModel) Update(msg tea.Msg) (AuthModel, tea.Cmd) {
@@ -182,27 +152,13 @@ func (m AuthModel) Update(msg tea.Msg) (AuthModel, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		// Dropdown open: capture navigation keys
-		if m.selectOpen {
-			switch msg.String() {
-			case "up", "k":
-				if m.selectIdx > 0 {
-					m.selectIdx--
+		// Dropdown open: capture all keys
+		if m.dropdown.IsOpen() {
+			if idx, handled := m.dropdown.HandleKey(msg.String(), len(authTypes)); handled {
+				if idx >= 0 {
+					m.typeIdx = idx
+					m.updateTokenInputFocus()
 				}
-			case "down", "j":
-				if m.selectIdx < len(authTypes)-1 {
-					m.selectIdx++
-				}
-			case "enter":
-				m.typeIdx = m.selectIdx
-				m.selectOpen = false
-				if m.typeIdx > 0 {
-					m.tokenInput.Focus()
-				} else {
-					m.tokenInput.Blur()
-				}
-			case "esc":
-				m.selectOpen = false
 			}
 			return m, nil
 		}
@@ -212,26 +168,17 @@ func (m AuthModel) Update(msg tea.Msg) (AuthModel, tea.Cmd) {
 		case "up":
 			if m.typeIdx > 0 {
 				m.typeIdx--
-				if m.typeIdx == 0 {
-					m.tokenInput.Blur()
-				}
+				m.updateTokenInputFocus()
 			}
 			return m, nil
 		case "down":
 			if m.typeIdx < len(authTypes)-1 {
 				m.typeIdx++
-				if m.typeIdx > 0 {
-					m.tokenInput.Focus()
-				}
+				m.updateTokenInputFocus()
 			}
 			return m, nil
 		case "ctrl+e":
-			// Toggle password visibility
-			if m.tokenInput.EchoMode == textinput.EchoPassword {
-				m.tokenInput.EchoMode = textinput.EchoNormal
-			} else {
-				m.tokenInput.EchoMode = textinput.EchoPassword
-			}
+			m.ToggleTokenVisibility()
 			return m, nil
 		}
 	}
@@ -248,18 +195,15 @@ func (m AuthModel) Update(msg tea.Msg) (AuthModel, tea.Cmd) {
 func (m AuthModel) View() string {
 	var b strings.Builder
 
-	// Compact button: "  Auth Type  None ▼"
-	typeName := authTypes[m.typeIdx]
-	label := lipgloss.NewStyle().Bold(true).Render("Auth Type")
-	typeBtn := lipgloss.NewStyle().Bold(true).Foreground(styles.PrimaryColor).Render(typeName + " ▼")
+	// Auth type row: label + button (button rendered as child layer in ViewLayer)
+	label := styles.BoldStyle.Render("Auth Type")
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("  %s  %s", label, typeBtn))
+	b.WriteString("  " + label)
 
 	if m.typeIdx > 0 {
 		b.WriteString("\n\n")
-		tokenLabel := lipgloss.NewStyle().Bold(true).Render("  Token")
-		hint := "  " + styles.MutedStyle.Underline(true).Render("toggle visibility [Ctrl+E]")
-		b.WriteString(tokenLabel + hint)
+		tokenLabel := styles.BoldStyle.Render("  Token")
+		b.WriteString(tokenLabel)
 		b.WriteString("\n")
 		b.WriteString("  " + m.tokenInput.View())
 	}

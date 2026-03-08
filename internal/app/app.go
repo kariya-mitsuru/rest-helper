@@ -14,20 +14,31 @@ import (
 	"rest-helper/internal/http"
 	"rest-helper/internal/storage"
 	"rest-helper/internal/ui/help"
+	"rest-helper/internal/ui/historypicker"
 	"rest-helper/internal/ui/request"
 	"rest-helper/internal/ui/response"
-	"rest-helper/internal/ui/sidebar"
 	"rest-helper/internal/ui/statusbar"
+	"rest-helper/internal/ui/styles"
 	"rest-helper/internal/ui/urlbar"
+	"rest-helper/internal/ui/widget"
+)
+
+// LayoutMode controls how request and response panels are displayed.
+type LayoutMode int
+
+const (
+	LayoutSplit LayoutMode = iota // both panels visible (default)
+	LayoutFull                    // one panel at a time, tab to switch
 )
 
 type Model struct {
 	urlbar    urlbar.Model
 	request   request.Model
 	response  response.Model
-	sidebar   sidebar.Model
 	statusbar statusbar.Model
 	help      help.Model
+
+	historyPicker *widget.OverlayPicker[storage.HistoryEntry]
 
 	lastReq        *http.Request
 	lastRawBody    string
@@ -39,18 +50,14 @@ type Model struct {
 	ready  bool
 
 	// Layout values
-	sidebarW int
-	reqH     int
-	respH    int
-	availH   int
+	reqH       int
+	respH      int
+	availH     int
+	reqHDelta  int  // user adjustment to default request height
+	borderDrag bool // mouse drag on request/response boundary
 
-	// Compositor from the last View() call, used for mouse hit-testing.
-	// Pointer wrapper so that the value-receiver View() can update it.
-	comp *compositorRef
-}
-
-type compositorRef struct {
-	c *lipgloss.Compositor
+	layoutMode LayoutMode // split or fullscreen
+	fullPanel  FocusPanel // which panel is shown in fullscreen (Request or Response)
 }
 
 func New(version string) Model {
@@ -58,11 +65,10 @@ func New(version string) Model {
 		urlbar:    urlbar.New(),
 		request:   request.New(),
 		response:  response.New(),
-		sidebar:   sidebar.New(),
 		statusbar: statusbar.New(),
 		help:      help.New(version),
 		focus:     FocusURLBar,
-		comp:      &compositorRef{},
+		fullPanel: FocusRequest,
 	}
 
 	// Restore persisted UI preferences.
@@ -75,6 +81,10 @@ func New(version string) Model {
 	if v, _ := storage.GetSetting(storage.KeyResponseWrap); v != "" {
 		m.response.SetWrapMode(v == "true")
 	}
+	if v, _ := storage.GetSetting(storage.KeyLayoutMode); v == "full" {
+		m.layoutMode = LayoutFull
+	}
+	m.applyLayoutMode()
 
 	return m
 }
@@ -84,7 +94,6 @@ func (m Model) Init() tea.Cmd {
 		m.urlbar.Init(),
 		m.request.Init(),
 		m.response.Init(),
-		m.sidebar.LoadHistory(),
 	)
 }
 
@@ -104,22 +113,94 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help.Visible = false
 			return m, nil
 		}
+		// Context menu captures all clicks when open
+		if m.response.ContextMenuVisible() {
+			cmd := m.response.HandleContextMenuClick(msg.X, msg.Y)
+			return m, cmd
+		}
+		// Picker overlays capture all clicks when open
+		if m.historyPicker != nil {
+			hit := m.hitTest(msg.X, msg.Y)
+			switch hit.ID() {
+			case "hp-vscrollbar":
+				b := hit.Bounds()
+				m.historyPicker.HandleScrollClick(msg.Y, b.Min.Y)
+			case "historypicker":
+				b := hit.Bounds()
+				if cmd := m.historyPicker.HandleClick(msg.Y - b.Min.Y); cmd != nil {
+					return m, cmd
+				}
+			default:
+				// Click outside picker closes it
+				m.historyPicker = nil
+			}
+			return m, nil
+		}
+		if m.response.FieldPickerVisible() {
+			hit := m.hitTest(msg.X, msg.Y)
+			fp := m.response.GetFieldPicker()
+			switch hit.ID() {
+			case "fp-vscrollbar":
+				b := hit.Bounds()
+				fp.HandleScrollClick(msg.Y, b.Min.Y)
+			case "fieldpicker":
+				b := hit.Bounds()
+				if cmd := fp.HandleClick(msg.Y - b.Min.Y); cmd != nil {
+					return m, cmd
+				}
+			default:
+				// Click outside picker closes it
+				m.response.CloseFieldPicker()
+			}
+			return m, nil
+		}
 		return m.handleMouseClick(msg)
 
 	case tea.MouseReleaseMsg:
-		if m.response.IsDragging() {
-			m.response.StopDrag()
+		if m.borderDrag {
+			m.borderDrag = false
+			return m, nil
+		}
+		if m.request.StopDrag() {
+			return m, nil
+		}
+		if m.response.StopDrag() {
+			return m, nil
+		}
+		if m.historyPicker != nil && m.historyPicker.HandleMouseUp() {
+			return m, nil
+		}
+		if fp := m.response.GetFieldPicker(); fp != nil && fp.HandleMouseUp() {
 			return m, nil
 		}
 		return m, nil
 
 	case tea.MouseMotionMsg:
-		if m.response.IsDragging() {
-			relX := msg.X - m.sidebarW - 1
-			if relX < 0 {
-				relX = 0
+		if m.borderDrag {
+			// mouseY is the desired boundary row; boundary is at row reqH
+			// (urlbar occupies row 0, request starts at row 1)
+			newReqH := msg.Y
+			if newReqH < minReqH {
+				newReqH = minReqH
 			}
-			m.response.HandleScrollBarMouse(relX)
+			maxReqH := m.availH - minRespH
+			if newReqH > maxReqH {
+				newReqH = maxReqH
+			}
+			m.reqHDelta = newReqH - m.availH*2/5
+			m.layout()
+			return m, nil
+		}
+		if m.request.HandleDragMotion(msg.X, msg.Y) {
+			return m, nil
+		}
+		if m.response.HandleDragMotion(msg.X, msg.Y) {
+			return m, nil
+		}
+		if m.historyPicker != nil && m.historyPicker.HandleMouseMove(msg.Y) {
+			return m, nil
+		}
+		if fp := m.response.GetFieldPicker(); fp != nil && fp.HandleMouseMove(msg.Y) {
 			return m, nil
 		}
 		return m, nil
@@ -130,18 +211,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help, cmd = m.help.Update(msg)
 			return m, cmd
 		}
+		if m.historyPicker != nil {
+			return m, m.historyPicker.Update(msg)
+		}
 		if m.response.FieldPickerVisible() {
-			// Convert wheel to up/down key for the field picker
-			var keyMsg tea.KeyPressMsg
-			if msg.Button == tea.MouseWheelUp {
-				keyMsg = tea.KeyPressMsg{Code: tea.KeyUp}
-			} else {
-				keyMsg = tea.KeyPressMsg{Code: tea.KeyDown}
-			}
-			cmd := m.response.UpdateFieldPicker(keyMsg)
-			return m, cmd
+			return m, m.response.UpdateFieldPicker(msg)
 		}
 		return m.handleMouseWheel(msg)
+
+	case historypicker.HistorySelectedMsg:
+		m.historyPicker = nil
+		m.loadFromHistory(msg.Entry)
+		return m, nil
+
+	case historypicker.HistoryClosedMsg:
+		m.historyPicker = nil
+		return m, nil
+
+	case historypicker.HistoryChangedMsg:
+		return m, nil
 
 	case response.FieldCopiedMsg:
 		m.response.CloseFieldPicker()
@@ -156,11 +244,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.response.CloseFieldPicker()
 		return m, nil
 
+	case response.ContextMenuCopiedMsg:
+		if msg.Error != nil {
+			m.statusbar.SetText("Copy failed: " + msg.Error.Error())
+		} else {
+			display := msg.Value
+			if len(display) > 40 {
+				display = display[:40] + "…"
+			}
+			m.statusbar.SetText("Copied: " + display)
+		}
+		return m, nil
+
 	case tea.KeyPressMsg:
+		// Context menu captures all input when visible
+		if m.response.ContextMenuVisible() {
+			cmd := m.response.HandleContextMenuKey(msg)
+			return m, cmd
+		}
+
+		// History picker overlay captures all input when visible
+		if m.historyPicker != nil {
+			return m, m.historyPicker.Update(msg)
+		}
+
 		// Field picker overlay captures all input when visible
 		if m.response.FieldPickerVisible() {
-			cmd := m.response.UpdateFieldPicker(msg)
-			return m, cmd
+			return m, m.response.UpdateFieldPicker(msg)
 		}
 
 		// Help overlay captures all input when visible
@@ -207,6 +317,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.urlbar.ToggleSelect()
 			return m, nil
 
+		case key.Matches(msg, Keys.LayoutToggle):
+			m.toggleLayoutMode()
+			return m, nil
+
 		case key.Matches(msg, Keys.Tab):
 			m.cycleFocus(1)
 			return m, nil
@@ -221,27 +335,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, Keys.HeaderTab):
 			m.request.SetTab(request.TabHeaders)
-			if m.focus != FocusRequest {
-				m.setFocus(FocusRequest)
-			}
+			m.setFocus(FocusRequest)
 			return m, nil
 
 		case key.Matches(msg, Keys.BodyTab):
 			m.request.SetTab(request.TabBody)
-			if m.focus != FocusRequest {
-				m.setFocus(FocusRequest)
-			}
+			m.setFocus(FocusRequest)
 			return m, nil
 
 		case key.Matches(msg, Keys.AuthTab):
 			m.request.SetTab(request.TabAuth)
-			if m.focus != FocusRequest {
-				m.setFocus(FocusRequest)
-			}
+			m.setFocus(FocusRequest)
 			return m, nil
 
 		case key.Matches(msg, Keys.HistoryTab):
-			m.setFocus(FocusSidebar)
+			m.openHistoryPicker()
 			return m, nil
 
 		case key.Matches(msg, Keys.ResponseBodyTab):
@@ -253,6 +361,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setFocus(FocusResponse)
 			m.response.SetTab(response.TabHeaders)
 			return m, nil
+
+		case key.Matches(msg, Keys.ResizeUp):
+			if m.layoutMode == LayoutSplit {
+				m.reqHDelta--
+				m.layout()
+			}
+			return m, nil
+
+		case key.Matches(msg, Keys.ResizeDown):
+			if m.layoutMode == LayoutSplit {
+				m.reqHDelta++
+				m.layout()
+			}
+			return m, nil
+		}
+
+		// URL bar: up/down opens history picker
+		if m.focus == FocusURLBar {
+			switch msg.String() {
+			case "up", "down":
+				m.openHistoryPicker()
+				return m, nil
+			}
 		}
 
 	case http.ResponseMsg:
@@ -268,19 +399,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.saveHistory(msg.Response))
 		}
 		return m, tea.Batch(cmds...)
-
-	case sidebar.HistorySelectedMsg:
-		m.loadFromHistory(msg.Entry)
-		return m, nil
 	}
 
-	// Forward to sidebar (it needs historyLoadedMsg etc)
-	var sideCmd tea.Cmd
-	m.sidebar, sideCmd = m.sidebar.Update(msg)
-	if sideCmd != nil {
-		cmds = append(cmds, sideCmd)
+	// Forward to history picker if open
+	if m.historyPicker != nil {
+		if cmd := m.historyPicker.Update(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
-	m.statusbar.SetHistoryCount(m.sidebar.EntryCount())
 
 	m.statusbar, _ = m.statusbar.Update(msg)
 
@@ -308,13 +434,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if w := m.response.GetWrapMode(); w != prevWrap {
 			_ = storage.SetSetting(storage.KeyResponseWrap, fmt.Sprintf("%t", w))
-		}
-	case FocusSidebar:
-		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
-			cmd := m.handleSidebarKey(keyMsg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
 		}
 	}
 
@@ -375,8 +494,8 @@ func (m *Model) saveHistory(resp *http.Response) tea.Cmd {
 	}
 
 	return func() tea.Msg {
-		storage.SaveHistory(entry)
-		return sidebar.HistoryUpdatedMsg{}
+		_ = storage.SaveHistory(entry)
+		return nil
 	}
 }
 
@@ -412,6 +531,11 @@ func (m *Model) loadFromHistory(entry storage.HistoryEntry) {
 	}
 }
 
+func (m *Model) openHistoryPicker() {
+	entries, _ := storage.ListHistory(200)
+	m.historyPicker = historypicker.New(entries, m.width, m.height)
+}
+
 // centerOverlay returns X, Y to center the rendered overlay within the screen.
 func centerOverlay(screenW, screenH int, rendered string) (int, int) {
 	x := (screenW - lipgloss.Width(rendered)) / 2
@@ -425,12 +549,92 @@ func centerOverlay(screenW, screenH int, rendered string) (int, int) {
 	return x, y
 }
 
-// hitTest performs a hit test using the compositor built by the last View() call.
-func (m Model) hitTest(x, y int) lipgloss.LayerHit {
-	if m.comp.c == nil {
-		return lipgloss.LayerHit{}
+// buildCompositor creates a Compositor from the current UI state.
+func (m Model) buildCompositor() *lipgloss.Compositor {
+	// Base UI layers
+	var layers []*lipgloss.Layer
+
+	if m.layoutMode == LayoutFull {
+		layers = append(layers, m.urlbar.ViewLayer())
+		// Only show the active panel
+		if m.fullPanel == FocusRequest {
+			layers = append(layers, m.request.ViewLayer().Y(1))
+		} else {
+			layers = append(layers, m.response.ViewLayer().Y(1))
+		}
+		layers = append(layers, m.statusbar.ViewLayer().Y(1+m.availH))
+
+		// Panel switch tabs on the border
+		layers = append(layers, m.fullscreenTabLayers()...)
+	} else {
+		layers = append(layers,
+			m.urlbar.ViewLayer(),
+			m.request.ViewLayer().Y(1),
+			m.response.ViewLayer().Y(1+m.reqH),
+			m.statusbar.ViewLayer().Y(1+m.availH),
+		)
 	}
-	return m.comp.c.Hit(x, y)
+
+	// Dropdown overlays (Z=5, above clickable children at Z=1)
+	if m.urlbar.SelectOpen() {
+		layers = append(layers, lipgloss.NewLayer(m.urlbar.DropdownView()).
+			ID("method-dropdown").Y(1).Z(5))
+	}
+	if m.request.AuthSelectOpen() {
+		layers = append(layers, lipgloss.NewLayer(m.request.AuthDropdownView()).
+			ID("auth-dropdown").X(3).Y(5).Z(5))
+	}
+
+	// Full-screen overlays (Z=50)
+	if m.historyPicker != nil {
+		hpLayer := m.historyPicker.BuildLayer()
+		hpLayer.ID("historypicker").Y(1).Z(50)
+		layers = append(layers, hpLayer)
+	}
+	if m.response.FieldPickerVisible() {
+		fpLayer := m.response.BuildFieldPickerLayer()
+		x, y := centerOverlay(m.width, m.height, fpLayer.GetContent())
+		fpLayer.ID("fieldpicker").X(x).Y(y).Z(50)
+		layers = append(layers, fpLayer)
+	}
+	if m.response.ContextMenuVisible() {
+		layers = append(layers, m.response.BuildContextMenuLayer())
+	}
+	if m.help.Visible {
+		hv := m.help.View()
+		x, y := centerOverlay(m.width, m.height, hv)
+		layers = append(layers, lipgloss.NewLayer(hv).
+			ID("help").X(x).Y(y).Z(50))
+	}
+
+	return lipgloss.NewCompositor(layers...)
+}
+
+// fullscreenTabLayers renders Request/Response tabs on the panel border in fullscreen mode.
+func (m Model) fullscreenTabLayers() []*lipgloss.Layer {
+	reqLabel := " Request "
+	respLabel := " Response "
+
+	var reqRendered, respRendered string
+	if m.fullPanel == FocusRequest {
+		reqRendered = styles.BoldStyle.Render(reqLabel)
+		respRendered = styles.MutedStyle.Render(respLabel)
+	} else {
+		reqRendered = styles.MutedStyle.Render(reqLabel)
+		respRendered = styles.BoldStyle.Render(respLabel)
+	}
+
+	x := 2
+	reqLayer := lipgloss.NewLayer(reqRendered).ID("full-tab-request").X(x).Y(1).Z(2)
+	x += lipgloss.Width(reqRendered) + 1
+	respLayer := lipgloss.NewLayer(respRendered).ID("full-tab-response").X(x).Y(1).Z(2)
+
+	return []*lipgloss.Layer{reqLayer, respLayer}
+}
+
+// hitTest performs a hit test by building a compositor from the current state.
+func (m Model) hitTest(x, y int) lipgloss.LayerHit {
+	return m.buildCompositor().Hit(x, y)
 }
 
 func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
@@ -458,73 +662,117 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 		return *m, nil
 	}
 
+	// Boundary drag: click on the border between request and response (split mode only)
+	if m.layoutMode == LayoutSplit && (msg.Y == m.reqH || msg.Y == 1+m.reqH) {
+		m.borderDrag = true
+	}
+
 	if hit.Empty() {
 		return *m, nil
 	}
 
-	b := hit.Bounds()
-	relX := msg.X - b.Min.X
-	relY := msg.Y - b.Min.Y
-
 	switch hit.ID() {
-	case "urlbar":
+	// --- Fullscreen panel tabs ---
+	case "full-tab-request":
+		m.fullPanel = FocusRequest
+		m.setFocus(FocusRequest)
+		return *m, nil
+	case "full-tab-response":
+		m.fullPanel = FocusResponse
+		m.setFocus(FocusResponse)
+		return *m, nil
+
+	// --- URL bar ---
+	case "method-btn":
 		m.setFocus(FocusURLBar)
-		if m.urlbar.IsMethodClick(msg.X) {
-			m.urlbar.ToggleSelect()
-			return *m, nil
-		}
-		if m.urlbar.IsSendClick(msg.X) {
-			return m.sendRequest()
-		}
+		m.urlbar.ToggleSelect()
+		return *m, nil
+	case "send-btn":
+		m.setFocus(FocusURLBar)
+		return m.sendRequest()
+	case "history-btn":
+		m.openHistoryPicker()
+		return *m, nil
+	case "url-input", "url-hint", "urlbar":
+		m.setFocus(FocusURLBar)
 
+	// --- Status bar ---
+	case "layout-btn":
+		m.toggleLayoutMode()
+		return *m, nil
+	case "help-btn":
+		m.help.Toggle()
 	case "statusbar":
-		if m.statusbar.IsHelpClick(msg.X) {
-			m.help.Toggle()
-		}
+		// no action
 
-	case "sidebar":
-		m.setFocus(FocusSidebar)
-		cmd := m.sidebar.ClickAt(relY)
-		if cmd != nil {
-			return *m, cmd
-		}
-
+	// --- Request panel ---
+	case "req-tab-body":
+		m.setFocus(FocusRequest)
+		m.request.SetTab(request.TabBody)
+	case "req-tab-headers":
+		m.setFocus(FocusRequest)
+		m.request.SetTab(request.TabHeaders)
+	case "req-tab-auth":
+		m.setFocus(FocusRequest)
+		m.request.SetTab(request.TabAuth)
+	case "req-format-toggle":
+		m.setFocus(FocusRequest)
+		m.request.ToggleBodyFormat()
+		_ = storage.SetSetting(storage.KeyBodyFormat, m.request.GetBodyFormat())
+	case "req-auth-type-btn":
+		m.setFocus(FocusRequest)
+		m.request.AuthToggleSelect()
+	case "req-visibility-hint":
+		m.setFocus(FocusRequest)
+		m.request.ToggleTokenVisibility()
+	case "req-wrap-toggle":
+		m.setFocus(FocusRequest)
+		m.request.ToggleBodyWrap()
+	case "req-body-vscrollbar":
+		m.setFocus(FocusRequest)
+		b := hit.Bounds()
+		m.request.HandleBodyVScrollClick(msg.Y-b.Min.Y, b.Min.Y)
+	case "req-body-hscrollbar":
+		m.setFocus(FocusRequest)
+		b := hit.Bounds()
+		m.request.HandleBodyHScrollClick(msg.X-b.Min.X, b.Min.X)
 	case "request":
 		m.setFocus(FocusRequest)
-		contentX := relX - 1 // adjust for border
-		if contentX < 0 {
-			contentX = 0
-		}
-		if relY == 1 {
-			m.request.ClickTabAt(contentX)
-		} else {
-			prevFmt := m.request.GetBodyFormat()
-			m.request.ClickContent(relY, contentX)
-			if f := m.request.GetBodyFormat(); f != prevFmt {
-				_ = storage.SetSetting(storage.KeyBodyFormat, f)
-			}
-		}
 
-	case "response":
+	// --- Response panel ---
+	case "resp-tab-body":
 		m.setFocus(FocusResponse)
-		contentX := relX - 1 // adjust for border
-		if relY == 1 && contentX >= 0 {
-			adjX := contentX - m.response.TabAreaOffset()
-			if adjX >= 0 {
-				if m.response.IsFormatClick(adjX) {
-					m.response.ToggleFormat()
-					_ = storage.SetSetting(storage.KeyResponseFormat, m.response.GetPreferredFormat())
-				} else if m.response.IsWrapClick(adjX) {
-					m.response.ToggleWrap()
-					_ = storage.SetSetting(storage.KeyResponseWrap, fmt.Sprintf("%t", m.response.GetWrapMode()))
-				} else {
-					m.response.ClickTabAt(adjX)
-				}
-			}
-		} else if sbRow := m.response.ScrollBarRelY(); sbRow >= 0 && relY == sbRow && contentX >= 0 {
-			m.response.HandleScrollBarMouse(contentX)
-			m.response.StartDrag()
+		m.response.SetTab(response.TabBody)
+	case "resp-tab-headers":
+		m.setFocus(FocusResponse)
+		m.response.SetTab(response.TabHeaders)
+	case "resp-format-toggle":
+		m.setFocus(FocusResponse)
+		m.response.ToggleFormat()
+		_ = storage.SetSetting(storage.KeyResponseFormat, m.response.GetPreferredFormat())
+	case "resp-wrap-toggle":
+		m.setFocus(FocusResponse)
+		m.response.ToggleWrap()
+		_ = storage.SetSetting(storage.KeyResponseWrap, fmt.Sprintf("%t", m.response.GetWrapMode()))
+	case "resp-copy-btn":
+		m.setFocus(FocusResponse)
+		m.response.OpenFieldPicker()
+	case "resp-scrollbar":
+		m.setFocus(FocusResponse)
+		b := hit.Bounds()
+		m.response.HandleHScrollClick(msg.X-b.Min.X, b.Min.X)
+	case "resp-vscrollbar":
+		m.setFocus(FocusResponse)
+		b := hit.Bounds()
+		m.response.HandleVScrollClick(msg.Y-b.Min.Y, b.Min.Y)
+	case "response":
+		if msg.Button == tea.MouseRight {
+			m.setFocus(FocusResponse)
+			b := hit.Bounds()
+			m.response.OpenContextMenu(msg.X, msg.Y, b.Min.Y)
+			return *m, nil
 		}
+		m.setFocus(FocusResponse)
 	}
 
 	return *m, nil
@@ -534,12 +782,8 @@ func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 	hit := m.hitTest(msg.X, msg.Y)
 
 	switch hit.ID() {
-	case "sidebar":
-		if msg.Button == tea.MouseWheelUp {
-			m.sidebar.CursorUp()
-		} else {
-			m.sidebar.CursorDown()
-		}
+	case "request":
+		m.request.HandleWheel(msg)
 	case "response":
 		m.response.HandleWheel(msg)
 	}
@@ -548,7 +792,7 @@ func (m *Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 }
 
 func (m *Model) cycleFocus(dir int) {
-	panels := []FocusPanel{FocusURLBar, FocusSidebar, FocusRequest, FocusResponse}
+	panels := []FocusPanel{FocusURLBar, FocusRequest, FocusResponse}
 	current := 0
 	for i, p := range panels {
 		if p == m.focus {
@@ -565,7 +809,6 @@ func (m *Model) setFocus(panel FocusPanel) {
 	m.urlbar.Blur()
 	m.request.Blur()
 	m.response.Blur()
-	m.sidebar.Blur()
 
 	m.focus = panel
 	switch panel {
@@ -575,46 +818,30 @@ func (m *Model) setFocus(panel FocusPanel) {
 		m.request.Focus()
 	case FocusResponse:
 		m.response.Focus()
-	case FocusSidebar:
-		m.sidebar.Focus()
+	}
+
+	// In fullscreen mode, keep the visible panel in sync with focus.
+	if m.layoutMode == LayoutFull && (panel == FocusRequest || panel == FocusResponse) {
+		m.fullPanel = panel
 	}
 }
 
-func (m *Model) handleSidebarKey(msg tea.KeyPressMsg) tea.Cmd {
-	// Confirmation mode: only y/n/esc
-	if m.sidebar.InConfirmMode() {
-		switch msg.String() {
-		case "y", "Y":
-			return m.sidebar.ConfirmYes()
-		default:
-			m.sidebar.ConfirmCancel()
-			return nil
-		}
-	}
+const (
+	minReqH  = 8
+	minRespH = 6
+)
 
-	switch msg.String() {
-	case "up", "k":
-		m.sidebar.CursorUp()
-	case "down", "j":
-		m.sidebar.CursorDown()
-	case "enter":
-		return m.sidebar.SelectCurrent()
-	case "space":
-		m.sidebar.ToggleSelection()
-	case "d":
-		return m.sidebar.DeleteSingleOrSelected()
-	case "D":
-		m.sidebar.RequestDeleteOlder()
-	case "ctrl+d":
-		m.sidebar.RequestClearAll()
-	case "ctrl+x":
-		m.sidebar.RequestDeleteDuplicates()
-	case "esc":
-		if m.sidebar.HasSelection() {
-			m.sidebar.ClearSelection()
-		}
+func (m *Model) clampDelta() {
+	availH := m.height - 2
+	base := availH * 2 / 5
+	minDelta := minReqH - base
+	maxDelta := availH - minRespH - base
+	if m.reqHDelta < minDelta {
+		m.reqHDelta = minDelta
 	}
-	return nil
+	if m.reqHDelta > maxDelta {
+		m.reqHDelta = maxDelta
+	}
 }
 
 func (m *Model) layout() {
@@ -622,37 +849,62 @@ func (m *Model) layout() {
 	m.statusbar.SetWidth(m.width)
 	m.help.SetSize(m.width, m.height)
 
-	sidebarW := m.width / 4
-	if sidebarW < 20 {
-		sidebarW = 20
-	}
-	if sidebarW > 40 {
-		sidebarW = 40
-	}
-
-	rightW := m.width - sidebarW
 	availH := m.height - 2
-
-	reqH := availH * 2 / 5
-	respH := availH - reqH
-
-	if reqH < 6 {
-		reqH = 6
-	}
-	if respH < 5 {
-		respH = 5
-	}
-
-	m.sidebarW = sidebarW
-	m.reqH = reqH
-	m.respH = respH
 	m.availH = availH
+	m.response.SetScreenSize(m.width, m.height)
 
-	m.sidebar.SetSize(sidebarW, availH)
-	m.request.SetSize(rightW, reqH)
-	m.response.SetSize(rightW, respH)
+	if m.layoutMode == LayoutFull {
+		// Fullscreen: one panel takes all available height
+		m.reqH = availH
+		m.respH = availH
+		m.request.SetSize(m.width, availH)
+		m.response.SetSize(m.width, availH)
+	} else {
+		m.clampDelta()
+		reqH := availH*2/5 + m.reqHDelta
+		respH := availH - reqH
+		m.reqH = reqH
+		m.respH = respH
+		m.request.SetSize(m.width, reqH)
+		m.response.SetSize(m.width, respH)
+	}
 
-	m.statusbar.SetHistoryCount(m.sidebar.EntryCount())
+	if m.historyPicker != nil {
+		m.historyPicker.SetSize(m.width, m.height)
+	}
+}
+
+// applyLayoutMode updates panel state to match the current layout mode.
+func (m *Model) applyLayoutMode() {
+	isFull := m.layoutMode == LayoutFull
+	m.request.SetHideTitle(isFull)
+	m.response.SetHideTitle(isFull)
+	if isFull {
+		m.statusbar.SetLayoutLabel("Full")
+	} else {
+		m.statusbar.SetLayoutLabel("Split")
+	}
+}
+
+// toggleLayoutMode switches between split and fullscreen modes.
+func (m *Model) toggleLayoutMode() {
+	if m.layoutMode == LayoutSplit {
+		m.layoutMode = LayoutFull
+		// Show the currently focused panel, or default to request
+		if m.focus == FocusRequest || m.focus == FocusResponse {
+			m.fullPanel = m.focus
+		}
+	} else {
+		m.layoutMode = LayoutSplit
+	}
+	m.applyLayoutMode()
+	m.layout()
+
+	modeStr := "split"
+	if m.layoutMode == LayoutFull {
+		modeStr = "full"
+	}
+	_ = storage.SetSetting(storage.KeyLayoutMode, modeStr)
 }
 
 func (m Model) View() tea.View {
@@ -660,41 +912,7 @@ func (m Model) View() tea.View {
 		return tea.NewView("Loading...")
 	}
 
-	// Base UI layers
-	layers := []*lipgloss.Layer{
-		lipgloss.NewLayer(m.urlbar.View()).ID("urlbar"),
-		lipgloss.NewLayer(m.sidebar.View()).ID("sidebar").Y(1),
-		lipgloss.NewLayer(m.request.View()).ID("request").X(m.sidebarW).Y(1),
-		lipgloss.NewLayer(m.response.View()).ID("response").X(m.sidebarW).Y(1 + m.reqH),
-		lipgloss.NewLayer(m.statusbar.View()).ID("statusbar").Y(1 + m.availH),
-	}
-
-	// Dropdown overlays (Z=1)
-	if m.urlbar.SelectOpen() {
-		layers = append(layers, lipgloss.NewLayer(m.urlbar.DropdownView()).
-			ID("method-dropdown").Y(1).Z(1))
-	}
-	if m.request.AuthSelectOpen() {
-		layers = append(layers, lipgloss.NewLayer(m.request.AuthDropdownView()).
-			ID("auth-dropdown").X(m.sidebarW+3).Y(5).Z(1))
-	}
-
-	// Full-screen overlays (Z=10)
-	if m.response.FieldPickerVisible() {
-		fp := m.response.ViewFieldPicker()
-		x, y := centerOverlay(m.width, m.height, fp)
-		layers = append(layers, lipgloss.NewLayer(fp).
-			ID("fieldpicker").X(x).Y(y).Z(10))
-	}
-	if m.help.Visible {
-		hv := m.help.View()
-		x, y := centerOverlay(m.width, m.height, hv)
-		layers = append(layers, lipgloss.NewLayer(hv).
-			ID("help").X(x).Y(y).Z(10))
-	}
-
-	comp := lipgloss.NewCompositor(layers...)
-	m.comp.c = comp // store for hit-testing in mouse handlers
+	comp := m.buildCompositor()
 	canvas := lipgloss.NewCanvas(m.width, m.height)
 	canvas.Compose(comp)
 

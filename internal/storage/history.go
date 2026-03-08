@@ -73,12 +73,18 @@ func ListHistory(limit int) ([]HistoryEntry, error) {
 
 func DeleteHistory(id int64) error {
 	_, err := db.Exec("DELETE FROM history WHERE id = ?", id)
-	return err
+	if err != nil {
+		return fmt.Errorf("deleting history entry %d: %w", id, err)
+	}
+	return nil
 }
 
 func ClearHistory() error {
 	_, err := db.Exec("DELETE FROM history")
-	return err
+	if err != nil {
+		return fmt.Errorf("clearing history: %w", err)
+	}
+	return nil
 }
 
 // DeleteHistoryBatch deletes multiple history entries by their IDs.
@@ -94,7 +100,10 @@ func DeleteHistoryBatch(ids []int64) error {
 	}
 	query := "DELETE FROM history WHERE id IN (" + strings.Join(placeholders, ",") + ")"
 	_, err := db.Exec(query, args...)
-	return err
+	if err != nil {
+		return fmt.Errorf("batch deleting history: %w", err)
+	}
+	return nil
 }
 
 // DeleteHistoryOlderThan deletes entries with created_at strictly before
@@ -104,7 +113,7 @@ func DeleteHistoryOlderThan(id int64) (int64, error) {
 		`DELETE FROM history WHERE created_at < (SELECT created_at FROM history WHERE id = ?)`, id,
 	)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("deleting history older than %d: %w", id, err)
 	}
 	return result.RowsAffected()
 }
@@ -117,7 +126,7 @@ func DeleteHistoryDuplicates() (int64, error) {
 			SELECT MAX(id) FROM history GROUP BY method, url
 		)`)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("deleting duplicate history: %w", err)
 	}
 	return result.RowsAffected()
 }

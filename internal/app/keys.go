@@ -19,6 +19,9 @@ type KeyMap struct {
 	ResponseBodyTab   key.Binding
 	ResponseHeaderTab key.Binding
 	Help              key.Binding
+	ResizeUp          key.Binding
+	ResizeDown        key.Binding
+	LayoutToggle      key.Binding
 }
 
 var Keys = KeyMap{
@@ -77,5 +80,17 @@ var Keys = KeyMap{
 	Help: key.NewBinding(
 		key.WithKeys("ctrl+?", "f1", "?"),
 		key.WithHelp("?/F1", "help"),
+	),
+	ResizeUp: key.NewBinding(
+		key.WithKeys("ctrl+up"),
+		key.WithHelp("ctrl+↑", "grow request"),
+	),
+	ResizeDown: key.NewBinding(
+		key.WithKeys("ctrl+down"),
+		key.WithHelp("ctrl+↓", "shrink request"),
+	),
+	LayoutToggle: key.NewBinding(
+		key.WithKeys("alt+l"),
+		key.WithHelp("alt+l", "toggle layout"),
 	),
 }

@@ -3,13 +3,11 @@
 package request
 
 import (
-	"fmt"
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"rest-helper/internal/ui/styles"
+	"rest-helper/internal/ui/widget"
 )
 
 type Tab int
@@ -20,16 +18,10 @@ const (
 	TabAuth
 )
 
-type tabInfo struct {
-	name string
-	tab  Tab
-	key  string
-}
-
-var tabsConfig = []tabInfo{
-	{"Body", TabBody, "B"},
-	{"Headers", TabHeaders, "E"},
-	{"Auth", TabAuth, "A"},
+var tabsConfig = []styles.TabDef{
+	{Name: "Body", Key: "B", Index: int(TabBody)},
+	{Name: "Headers", Key: "E", Index: int(TabHeaders)},
+	{Name: "Auth", Key: "A", Index: int(TabAuth)},
 }
 
 type Model struct {
@@ -41,6 +33,11 @@ type Model struct {
 	focused   bool
 	width     int
 	height    int
+
+	bodyVDrag widget.ScrollDrag
+	bodyHDrag widget.ScrollDrag
+
+	hideTitle bool
 }
 
 func New() Model {
@@ -82,7 +79,7 @@ func (m Model) GetRawBody() string {
 
 // GetBodyFormat returns "JSON" or "YAML".
 func (m Model) GetBodyFormat() string {
-	if m.body.Format() == FormatYAML {
+	if m.body.Format() == formatYAML {
 		return "YAML"
 	}
 	return "JSON"
@@ -91,10 +88,14 @@ func (m Model) GetBodyFormat() string {
 // SetBodyFormat sets the body format mode.
 func (m *Model) SetBodyFormat(format string) {
 	if format == "YAML" {
-		m.body.SetFormat(FormatYAML)
+		m.body.SetFormat(formatYAML)
 	} else {
-		m.body.SetFormat(FormatJSON)
+		m.body.SetFormat(formatJSON)
 	}
+}
+
+func (m *Model) SetHideTitle(hide bool) {
+	m.hideTitle = hide
 }
 
 func (m *Model) SetTab(tab Tab) {
@@ -109,9 +110,7 @@ func (m *Model) Focus() {
 
 func (m *Model) Blur() {
 	m.focused = false
-	m.headers.Blur()
-	m.body.Blur()
-	m.auth.Blur()
+	m.updateTabFocus()
 }
 
 func (m *Model) updateTabFocus() {
@@ -133,56 +132,14 @@ func (m *Model) updateTabFocus() {
 	}
 }
 
-// ClickContent handles a click within the request panel content area.
-// relRow and relCol are relative to the request panel top-left (including border).
-func (m *Model) ClickContent(relRow, relCol int) {
-	switch m.activeTab {
-	case TabBody:
-		// Format label row: border(1) + tabs(1) + textarea_height
-		// textarea height = (m.height - 3) - 1 = m.height - 4
-		formatRow := 1 + 1 + (m.height - 4)
-		if relRow != formatRow {
-			return
-		}
-		// Format label is rendered as "  " + "JSON/YAML" starting at col 2
-		label := formatNames[m.body.format]
-		labelW := lipgloss.Width(styles.ActiveTab.Render(label))
-		if relCol >= 2 && relCol < 2+labelW {
-			m.body.ToggleFormat()
-		}
-
-	case TabAuth:
-		// Button row is at relRow == 3 (border=1, tabs=1, blank=1, button at row 3)
-		if relRow == 3 {
-			m.auth.ToggleSelect()
-		}
-		// Hint row: "  Token  toggle visibility [Ctrl+E]" at relRow == 5
-		if relRow == 5 && m.auth.HasTokenField() {
-			hintStart := lipgloss.Width(lipgloss.NewStyle().Bold(true).Render("  Token")) + 2
-			hintEnd := hintStart + lipgloss.Width(styles.MutedStyle.Underline(true).Render("toggle visibility [Ctrl+E]"))
-			if relCol >= hintStart && relCol < hintEnd {
-				m.auth.ToggleTokenVisibility()
-			}
-		}
-	}
+// ToggleBodyFormat toggles the body between JSON and YAML format.
+func (m *Model) ToggleBodyFormat() {
+	m.body.ToggleFormat()
 }
 
-// ClickTabAt determines which tab was clicked based on the column position
-// (relative to the request panel's content area) and switches to it.
-func (m *Model) ClickTabAt(col int) {
-	// Skip past "Request  " title prefix
-	titleW := lipgloss.Width(lipgloss.NewStyle().Bold(true).Render("Request"))
-	pos := titleW + 2
-	for _, t := range tabsConfig {
-		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
-		w := lipgloss.Width(styles.InactiveTab.Render(label))
-		if col >= pos && col < pos+w {
-			m.activeTab = t.tab
-			m.updateTabFocus()
-			return
-		}
-		pos += w + 2 // 2 spaces between tabs
-	}
+// ToggleTokenVisibility toggles the auth token between password and plain text.
+func (m *Model) ToggleTokenVisibility() {
+	m.auth.ToggleTokenVisibility()
 }
 
 // AuthSelectOpen returns true when the auth type dropdown is visible.
@@ -217,6 +174,117 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
+// HandleWheel processes a mouse wheel event regardless of focus state.
+func (m *Model) HandleWheel(msg tea.MouseWheelMsg) {
+	switch m.activeTab {
+	case TabBody:
+		key := tea.KeyDown
+		if msg.Button == tea.MouseWheelUp {
+			key = tea.KeyUp
+		}
+		// textarea.Update ignores input when not focused, so temporarily focus.
+		wasFocused := m.body.textarea.Focused()
+		if !wasFocused {
+			m.body.textarea.Focus()
+		}
+		m.body.textarea, _ = m.body.textarea.Update(tea.KeyPressMsg{Code: key})
+		if !wasFocused {
+			m.body.textarea.Blur()
+		}
+	case TabHeaders:
+		if msg.Button == tea.MouseWheelUp {
+			if m.headers.cursor > 0 {
+				m.headers.cursor--
+				m.headers.ensureCursorVisible()
+			}
+		} else {
+			if m.headers.cursor < len(m.headers.pairs)-1 {
+				m.headers.cursor++
+				m.headers.ensureCursorVisible()
+			}
+		}
+	}
+}
+
+// HandleBodyVScrollClick handles a click on the body vertical scrollbar.
+func (m *Model) HandleBodyVScrollClick(localY, baseY int) {
+	total := m.body.textarea.TotalLineCount()
+	vis := m.body.textarea.ViewportHeight()
+	if vis <= 1 || total <= vis {
+		return
+	}
+	if newOff, changed := m.bodyVDrag.HandleClickAndClamp(localY, baseY, total, vis, m.body.textarea.YOffset()); changed {
+		m.body.textarea.SetYOffset(newOff)
+	}
+}
+
+// handleBodyVScrollDrag processes mouse motion during body scrollbar drag.
+func (m *Model) handleBodyVScrollDrag(mouseY int) {
+	total := m.body.textarea.TotalLineCount()
+	vis := m.body.textarea.ViewportHeight()
+	if vis <= 1 || total <= vis {
+		return
+	}
+	m.body.textarea.SetYOffset(m.bodyVDrag.DragOffset(mouseY, vis, total))
+}
+
+// ToggleBodyWrap toggles between wrap and scroll mode for the body textarea.
+func (m *Model) ToggleBodyWrap() { m.body.ToggleWrap() }
+
+// HandleBodyHScrollClick handles a click on the body horizontal scrollbar.
+func (m *Model) HandleBodyHScrollClick(localCol, baseX int) {
+	maxW := m.body.textarea.MaxLineWidth()
+	contentW := m.body.textarea.Width()
+	if contentW <= 0 || maxW <= contentW {
+		return
+	}
+	if delta := m.bodyHDrag.HandleClick(localCol, baseX, maxW, contentW, m.body.textarea.XOffset()); delta != 0 {
+		m.body.textarea.SetXOffset(m.body.textarea.XOffset() + delta)
+	}
+}
+
+// handleBodyHScrollDrag processes mouse motion during body horizontal scrollbar drag.
+func (m *Model) handleBodyHScrollDrag(mouseX int) {
+	maxW := m.body.textarea.MaxLineWidth()
+	contentW := m.body.textarea.Width()
+	if contentW <= 0 || maxW <= contentW {
+		return
+	}
+	m.body.textarea.SetXOffset(m.bodyHDrag.DragOffset(mouseX, contentW, maxW))
+}
+
+// IsDragging reports whether any scrollbar drag is active.
+func (m Model) IsDragging() bool {
+	return m.bodyVDrag.Active() || m.bodyHDrag.Active()
+}
+
+// StopDrag ends any active scrollbar drag. Returns true if a drag was stopped.
+func (m *Model) StopDrag() bool {
+	if m.bodyVDrag.Active() {
+		m.bodyVDrag.Stop()
+		return true
+	}
+	if m.bodyHDrag.Active() {
+		m.bodyHDrag.Stop()
+		return true
+	}
+	return false
+}
+
+// HandleDragMotion processes mouse motion for any active scrollbar drag.
+// Returns true if a drag was handled.
+func (m *Model) HandleDragMotion(x, y int) bool {
+	if m.bodyVDrag.Active() {
+		m.handleBodyVScrollDrag(y)
+		return true
+	}
+	if m.bodyHDrag.Active() {
+		m.handleBodyHScrollDrag(x)
+		return true
+	}
+	return false
+}
+
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if !m.focused {
 		return m, nil
@@ -235,14 +303,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) View() string {
-	title := lipgloss.NewStyle().Bold(true).Render("Request")
-	tabs := title + "  " + m.renderTabs()
+func (m Model) ViewLayer() *lipgloss.Layer {
+	title := styles.BoldStyle.Render("Request")
 
-	borderStyle := styles.NormalBorder
-	if m.focused {
-		borderStyle = styles.FocusedBorder
-	}
+	borderStyle := styles.BorderStyleForFocus(m.focused)
 
 	var content string
 	switch m.activeTab {
@@ -254,24 +318,86 @@ func (m Model) View() string {
 		content = m.auth.View()
 	}
 
-	inner := lipgloss.JoinVertical(lipgloss.Left, tabs, content)
+	// Reserve first row for tab buttons (rendered as child layers)
+	inner := "\n" + content
+	full := borderStyle.Width(m.width).Height(m.height).Render(inner)
 
-	return borderStyle.
-		Width(m.width).
-		Height(m.height).
-		Render(inner)
-}
+	// Title on top border (hidden in fullscreen mode; app renders tabs instead)
+	var children []*lipgloss.Layer
+	if !m.hideTitle {
+		children = append(children, lipgloss.NewLayer(title).X(2).Y(0).Z(1))
+	}
 
-func (m Model) renderTabs() string {
-	var parts []string
-	for _, t := range tabsConfig {
-		label := fmt.Sprintf("%s [Alt+%s]", t.name, t.key)
-		if t.tab == m.activeTab {
-			parts = append(parts, styles.ActiveTab.Render(label))
-		} else {
-			parts = append(parts, styles.InactiveTab.Render(label))
+	// Tab buttons on first content row (Y=1, inside border)
+	tabLayers, tabEndX := styles.RenderTabLayers(tabsConfig, int(m.activeTab), "req-tab-", 2, 1)
+	children = append(children, tabLayers...)
+
+	switch m.activeTab {
+	case TabHeaders:
+		// Vertical scrollbar: border(1) + tabs(1) + column header(1) = Y offset 3
+		total := len(m.headers.pairs)
+		vis := m.headers.visibleRows()
+		if sbLayer := widget.ScrollbarLayer("req-headers-vscrollbar", total, vis, m.headers.scrollOffset, m.width, 3, 1); sbLayer != nil {
+			children = append(children, sbLayer)
+		}
+
+	case TabBody:
+		// Format toggle on tab row
+		x := tabEndX
+		formatLabel := styles.ActiveTab.Render(formatNames[m.body.format] + " [Ctrl+T]")
+		children = append(children, lipgloss.NewLayer(formatLabel).
+			ID("req-format-toggle").
+			X(x).Y(1).Z(1))
+		x += lipgloss.Width(formatLabel) + 2
+
+		// Wrap/Scroll toggle on tab row
+		wrapRendered := styles.ActiveTab.Render(styles.WrapToggleLabel(m.body.WrapMode()))
+		children = append(children, lipgloss.NewLayer(wrapRendered).
+			ID("req-wrap-toggle").
+			X(x).Y(1).Z(1))
+
+		// Vertical scrollbar
+		total := m.body.textarea.TotalLineCount()
+		vis := m.body.textarea.ViewportHeight()
+		if sbLayer := widget.ScrollbarLayer("req-body-vscrollbar", total, vis, m.body.textarea.YOffset(), m.width, 2, 1); sbLayer != nil {
+			children = append(children, sbLayer)
+		}
+
+		// Horizontal scrollbar (scroll mode only)
+		if !m.body.WrapMode() {
+			maxW := m.body.textarea.MaxLineWidth()
+			contentW := m.body.textarea.Width()
+			if maxW > contentW {
+				sb := styles.RenderHScrollbar(maxW, contentW, m.body.textarea.XOffset())
+				sbY := m.height - 2 // last content row inside border
+				children = append(children, lipgloss.NewLayer(sb).
+					ID("req-body-hscrollbar").
+					X(2).Y(sbY).Z(1))
+			}
+		}
+
+	case TabAuth:
+		// Auth type button
+		label := styles.BoldStyle.Render("Auth Type")
+		typeName := authTypes[m.auth.typeIdx]
+		typeBtn := styles.BoldStyle.Foreground(styles.PrimaryColor).
+			Render(typeName + " ▼")
+		btnX := 1 + 1 + 2 + lipgloss.Width(label) + 2 // border(1) + padding(1) + indent(2) + label + gap(2)
+		children = append(children, lipgloss.NewLayer(typeBtn).
+			ID("req-auth-type-btn").
+			X(btnX).Y(3).Z(1))
+
+		// Visibility toggle hint
+		if m.auth.HasTokenField() {
+			hint := styles.MutedStyle.Underline(true).
+				Render("toggle visibility [Ctrl+E]")
+			tokenLabel := styles.BoldStyle.Render("  Token")
+			hintX := 1 + 1 + lipgloss.Width(tokenLabel) + 2 // border(1) + padding(1) + label + gap(2)
+			children = append(children, lipgloss.NewLayer(hint).
+				ID("req-visibility-hint").
+				X(hintX).Y(5).Z(1))
 		}
 	}
 
-	return strings.Join(parts, "  ")
+	return lipgloss.NewLayer(full, children...).ID("request")
 }

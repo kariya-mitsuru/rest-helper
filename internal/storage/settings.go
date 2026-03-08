@@ -9,6 +9,7 @@ const (
 	KeyBodyFormat     = "body_format"
 	KeyResponseFormat = "response_format"
 	KeyResponseWrap   = "response_wrap"
+	KeyLayoutMode     = "layout_mode"
 )
 
 // GetSetting returns the value for the given key, or "" if not found.

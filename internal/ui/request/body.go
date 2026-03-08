@@ -6,29 +6,29 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"charm.land/bubbles/v2/textarea"
+	"rest-helper/internal/ui/widget/textarea"
+
 	tea "charm.land/bubbletea/v2"
 	"gopkg.in/yaml.v3"
-
-	"rest-helper/internal/ui/styles"
 )
 
-type BodyFormat int
+type bodyFormat int
 
 const (
-	FormatJSON BodyFormat = iota
-	FormatYAML
+	formatJSON bodyFormat = iota
+	formatYAML
 )
 
-var formatNames = map[BodyFormat]string{
-	FormatJSON: "JSON",
-	FormatYAML: "YAML",
+var formatNames = map[bodyFormat]string{
+	formatJSON: "JSON",
+	formatYAML: "YAML",
 }
 
 type BodyModel struct {
-	textarea textarea.Model
-	format   BodyFormat
-	focused  bool
+	textarea    textarea.Model
+	format      bodyFormat
+	focused     bool
+	allocHeight int // height allocated by parent (before scrollbar adjustment)
 }
 
 func NewBody() BodyModel {
@@ -37,11 +37,11 @@ func NewBody() BodyModel {
 	ta.CharLimit = 0
 	ta.SetWidth(60)
 	ta.SetHeight(10)
-	ta.ShowLineNumbers = true
+	ta.Prompt = ""
 
 	return BodyModel{
 		textarea: ta,
-		format:   FormatYAML,
+		format:   formatYAML,
 	}
 }
 
@@ -58,33 +58,33 @@ func (m BodyModel) JSONValue() (string, error) {
 	}
 
 	switch m.format {
-	case FormatYAML:
+	case formatYAML:
 		return yamlToJSON(raw)
 	default:
 		return raw, nil
 	}
 }
 
-func (m BodyModel) Format() BodyFormat {
+func (m BodyModel) Format() bodyFormat {
 	return m.format
 }
 
-func (m *BodyModel) SetFormat(f BodyFormat) {
+func (m *BodyModel) SetFormat(f bodyFormat) {
 	m.format = f
 	m.updatePlaceholder()
 }
 
 func (m *BodyModel) ToggleFormat() {
-	if m.format == FormatJSON {
-		m.format = FormatYAML
+	if m.format == formatJSON {
+		m.format = formatYAML
 	} else {
-		m.format = FormatJSON
+		m.format = formatJSON
 	}
 	m.updatePlaceholder()
 }
 
 func (m *BodyModel) updatePlaceholder() {
-	if m.format == FormatYAML {
+	if m.format == formatYAML {
 		m.textarea.Placeholder = "key: value"
 	} else {
 		m.textarea.Placeholder = `{"key": "value"}`
@@ -93,6 +93,16 @@ func (m *BodyModel) updatePlaceholder() {
 
 func (m *BodyModel) SetValue(v string) {
 	m.textarea.SetValue(v)
+	// SetValue leaves cursor at end; move to top so the view starts there.
+	// textarea.Update ignores input when not focused, so temporarily focus.
+	wasFocused := m.textarea.Focused()
+	if !wasFocused {
+		m.textarea.Focus()
+	}
+	m.textarea, _ = m.textarea.Update(tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModCtrl})
+	if !wasFocused {
+		m.textarea.Blur()
+	}
 }
 
 func (m *BodyModel) Focus() {
@@ -105,9 +115,26 @@ func (m *BodyModel) Blur() {
 	m.textarea.Blur()
 }
 
+func (m *BodyModel) ToggleWrap() {
+	m.textarea.SetWrapMode(!m.textarea.WrapMode())
+	h := m.allocHeight
+	if !m.textarea.WrapMode() {
+		h-- // reserve 1 row for horizontal scrollbar
+	}
+	m.textarea.SetHeight(h)
+}
+
+func (m *BodyModel) WrapMode() bool {
+	return m.textarea.WrapMode()
+}
+
 func (m *BodyModel) SetSize(w, h int) {
-	m.textarea.SetWidth(w - 4)
-	m.textarea.SetHeight(h - 1)
+	m.allocHeight = h
+	m.textarea.SetWidth(w - 4) // border(2) + padding(1) + right margin(1)
+	if !m.textarea.WrapMode() {
+		h-- // reserve 1 row for horizontal scrollbar
+	}
+	m.textarea.SetHeight(h)
 }
 
 func (m BodyModel) Update(msg tea.Msg) (BodyModel, tea.Cmd) {
@@ -117,8 +144,12 @@ func (m BodyModel) Update(msg tea.Msg) (BodyModel, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		if msg.String() == "ctrl+t" {
+		switch msg.String() {
+		case "ctrl+t":
 			m.ToggleFormat()
+			return m, nil
+		case "ctrl+w":
+			m.ToggleWrap()
 			return m, nil
 		}
 	}
@@ -129,15 +160,7 @@ func (m BodyModel) Update(msg tea.Msg) (BodyModel, tea.Cmd) {
 }
 
 func (m BodyModel) View() string {
-	content := m.textarea.View()
-
-	formatLabel := styles.ActiveTab.Render(formatNames[m.format])
-
-	content += "\n  " + formatLabel
-	if m.focused {
-		content += styles.MutedStyle.Render("  ctrl+t: toggle format")
-	}
-	return content
+	return m.textarea.View()
 }
 
 func yamlToJSON(yamlStr string) (string, error) {
